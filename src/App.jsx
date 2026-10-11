@@ -29,7 +29,7 @@ const navigation = [
 const appointmentLabels = ["Awaiting response", "Confirmed", "Completed", "Cancelled"];
 const claimLabels = ["In review", "Approved", "Declined"];
 const DEFAULT_ACCESS_POLICY_SECONDS = 30 * 24 * 60 * 60;
-const API_BASE_URL = "http://localhost:3001";
+const API_BASE_URL = import.meta.env.VITE_API_URL ?? (import.meta.env.DEV ? "http://localhost:3001" : "");
 let apiSessionToken = "";
 
 // Sandbox demo accounts for zero-friction evaluation
