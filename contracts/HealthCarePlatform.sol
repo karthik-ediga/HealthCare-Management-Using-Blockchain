@@ -64,6 +64,25 @@ contract HealthCarePlatform {
         string reason;
         uint8 status; // 0: Pending, 1: Approved, 2: Rejected
         uint256 requestedAt;
+        uint256 validForSeconds;
+        uint256 expiresAt;
+    }
+
+    struct AccessPolicy {
+        bool granted;
+        uint256 grantedAt;
+        uint256 validForSeconds;
+        uint256 expiresAt;
+        string purpose;
+    }
+
+    struct AccessAuditLog {
+        address patient;
+        address doctor;
+        bool granted;
+        string purpose;
+        uint256 timestamp;
+        uint256 expiresAt;
     }
 
     struct DoctorProfile {
@@ -89,6 +108,8 @@ contract HealthCarePlatform {
     mapping(uint256 => AccessRequest) private _accessRequests;
     mapping(address => uint256[]) private _patientRequestIds;
     mapping(address => uint256[]) private _doctorRequestIds;
+    mapping(address => mapping(address => AccessPolicy)) private _accessPolicies;
+    mapping(address => AccessAuditLog[]) private _accessAuditLogs;
 
     mapping(address => DoctorProfile) public doctorProfiles;
     mapping(address => PatientProfile) public patientProfiles;
@@ -97,6 +118,7 @@ contract HealthCarePlatform {
     event DoctorApprovalChanged(address indexed doctor, bool approved);
     event InsurerApprovalChanged(address indexed insurer, bool approved);
     event RecordAccessChanged(address indexed patient, address indexed doctor, bool granted);
+    event AccessPolicyUpdated(address indexed patient, address indexed doctor, bool granted, uint256 validForSeconds, string purpose);
     event AccessRequested(uint256 indexed requestId, address indexed patient, address indexed doctor, string reason);
     event AccessRequestResolved(uint256 indexed requestId, uint8 status);
     event RecordAdded(uint256 indexed recordId, address indexed patient, address indexed author, string encryptedUri, bytes32 digest, uint256 createdAt);
@@ -182,12 +204,75 @@ contract HealthCarePlatform {
     // --- Access Control & Request Workflow ---
 
     function setRecordAccess(address doctor, bool granted) external {
+        _setRecordAccessPolicy(doctor, granted, 0, granted ? "Consent granted" : "");
+    }
+
+    function setRecordAccessWithPolicy(
+        address doctor,
+        bool granted,
+        uint256 validForSeconds,
+        string calldata purpose
+    ) public {
+        _setRecordAccessPolicy(doctor, granted, validForSeconds, purpose);
+    }
+
+    function _setRecordAccessPolicy(
+        address doctor,
+        bool granted,
+        uint256 validForSeconds,
+        string memory purpose
+    ) internal {
         require(approvedDoctors[doctor], "Doctor not approved");
+
+        AccessPolicy storage policy = _accessPolicies[msg.sender][doctor];
+        policy.granted = granted;
+        policy.grantedAt = block.timestamp;
+        policy.validForSeconds = validForSeconds;
+        policy.expiresAt = granted && validForSeconds > 0 ? block.timestamp + validForSeconds : 0;
+        policy.purpose = purpose;
+
         hasRecordAccess[msg.sender][doctor] = granted;
+
+        _accessAuditLogs[msg.sender].push(
+            AccessAuditLog({
+                patient: msg.sender,
+                doctor: doctor,
+                granted: granted,
+                purpose: granted ? string(purpose) : "Access revoked",
+                timestamp: block.timestamp,
+                expiresAt: policy.expiresAt
+            })
+        );
+
         emit RecordAccessChanged(msg.sender, doctor, granted);
+        emit AccessPolicyUpdated(msg.sender, doctor, granted, validForSeconds, purpose);
+    }
+
+    function getAccessPolicy(address patient, address doctor) external view returns (AccessPolicy memory) {
+        require(msg.sender == patient || msg.sender == owner || msg.sender == doctor, "Not authorized");
+        return _accessPolicies[patient][doctor];
+    }
+
+    function getAccessLogCount(address patient) external view returns (uint256) {
+        require(msg.sender == patient || msg.sender == owner, "Not authorized");
+        return _accessAuditLogs[patient].length;
+    }
+
+    function getAccessLog(address patient, uint256 index) external view returns (AccessAuditLog memory) {
+        require(msg.sender == patient || msg.sender == owner, "Not authorized");
+        require(index < _accessAuditLogs[patient].length, "Audit log not found");
+        return _accessAuditLogs[patient][index];
     }
 
     function requestRecordAccess(address patient, string calldata reason) external returns (uint256 requestId) {
+        return requestRecordAccessWithPolicy(patient, reason, 0);
+    }
+
+    function requestRecordAccessWithPolicy(
+        address patient,
+        string calldata reason,
+        uint256 validForSeconds
+    ) public returns (uint256 requestId) {
         require(approvedDoctors[msg.sender], "Doctor not approved");
         require(patient != address(0), "Invalid patient");
         require(patient != msg.sender, "Cannot request own records");
@@ -199,7 +284,9 @@ contract HealthCarePlatform {
             patient: patient,
             reason: reason,
             status: 0,
-            requestedAt: block.timestamp
+            requestedAt: block.timestamp,
+            validForSeconds: validForSeconds,
+            expiresAt: 0
         });
 
         _patientRequestIds[patient].push(requestId);
@@ -215,10 +302,37 @@ contract HealthCarePlatform {
 
         if (approve) {
             req.status = 1;
+            req.expiresAt = req.validForSeconds > 0 ? block.timestamp + req.validForSeconds : 0;
             hasRecordAccess[msg.sender][req.doctor] = true;
+
+            AccessPolicy storage policy = _accessPolicies[msg.sender][req.doctor];
+            policy.granted = true;
+            policy.grantedAt = block.timestamp;
+            policy.validForSeconds = req.validForSeconds;
+            policy.expiresAt = req.expiresAt;
+            policy.purpose = req.reason;
+
+            _accessAuditLogs[msg.sender].push(
+                AccessAuditLog({
+                    patient: msg.sender,
+                    doctor: req.doctor,
+                    granted: true,
+                    purpose: req.reason,
+                    timestamp: block.timestamp,
+                    expiresAt: req.expiresAt
+                })
+            );
+
             emit RecordAccessChanged(msg.sender, req.doctor, true);
+            emit AccessPolicyUpdated(msg.sender, req.doctor, true, req.validForSeconds, req.reason);
         } else {
             req.status = 2;
+            AccessPolicy storage policy = _accessPolicies[msg.sender][req.doctor];
+            policy.granted = false;
+            policy.validForSeconds = 0;
+            policy.expiresAt = 0;
+            policy.purpose = "";
+            hasRecordAccess[msg.sender][req.doctor] = false;
         }
 
         emit AccessRequestResolved(requestId, req.status);
@@ -269,7 +383,7 @@ contract HealthCarePlatform {
         require(patient != address(0), "Invalid patient");
         require(bytes(encryptedUri).length > 0, "Missing encrypted URI");
         require(
-            msg.sender == patient || (approvedDoctors[msg.sender] && hasRecordAccess[patient][msg.sender]),
+            msg.sender == patient || (approvedDoctors[msg.sender] && _hasActiveRecordAccess(patient, msg.sender)),
             "No patient authorization"
         );
 
@@ -283,7 +397,7 @@ contract HealthCarePlatform {
 
     function getPatientRecordIds(address patient) external view returns (uint256[] memory) {
         require(
-            msg.sender == patient || (approvedDoctors[msg.sender] && hasRecordAccess[patient][msg.sender]),
+            msg.sender == patient || (approvedDoctors[msg.sender] && _hasActiveRecordAccess(patient, msg.sender)),
             "No patient authorization"
         );
         return _patientRecordIds[patient];
@@ -293,7 +407,7 @@ contract HealthCarePlatform {
         Record memory record = _records[recordId];
         require(record.patient != address(0), "Record not found");
         require(
-            msg.sender == record.patient || (approvedDoctors[msg.sender] && hasRecordAccess[record.patient][msg.sender]),
+            msg.sender == record.patient || (approvedDoctors[msg.sender] && _hasActiveRecordAccess(record.patient, msg.sender)),
             "No patient authorization"
         );
         return record;
@@ -303,7 +417,7 @@ contract HealthCarePlatform {
         Record memory record = _records[recordId];
         require(record.patient != address(0), "Record not found");
         require(
-            msg.sender == record.patient || (approvedDoctors[msg.sender] && hasRecordAccess[record.patient][msg.sender]),
+            msg.sender == record.patient || (approvedDoctors[msg.sender] && _hasActiveRecordAccess(record.patient, msg.sender)),
             "No patient authorization"
         );
         return recordMeta[recordId];
@@ -400,6 +514,13 @@ contract HealthCarePlatform {
     }
 
     // --- Internal Helpers ---
+
+    function _hasActiveRecordAccess(address patient, address doctor) private view returns (bool) {
+        if (!hasRecordAccess[patient][doctor]) return false;
+        AccessPolicy storage policy = _accessPolicies[patient][doctor];
+        if (policy.expiresAt == 0) return true;
+        return block.timestamp <= policy.expiresAt;
+    }
 
     function _sendValue(address recipient, uint256 amount) private {
         (bool success, ) = payable(recipient).call{value: amount}("");

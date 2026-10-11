@@ -103,4 +103,33 @@ describe("HealthCarePlatform", function () {
     expect(patProfile.bloodGroup).to.equal("O+");
   });
 
+  it("supports time-limited access and audit logging", async function () {
+    const { platform, patient, doctor } = await deployPlatform();
+    const digest = ethers.keccak256(ethers.toUtf8Bytes("urgent-care-report"));
+
+    await platform.connect(patient).addRecordWithDetails(
+      patient.address,
+      "ipfs://bafybeiauditrecord",
+      digest,
+      3,
+      "Follow-up Notes",
+      "Encrypted follow-up summary"
+    );
+
+    await platform.connect(patient).setRecordAccessWithPolicy(doctor.address, true, 86400, "Cardiology review");
+    const policy = await platform.getAccessPolicy(patient.address, doctor.address);
+    expect(policy.granted).to.equal(true);
+    expect(policy.validForSeconds).to.equal(86400n);
+    expect(policy.purpose).to.equal("Cardiology review");
+
+    await expect(platform.connect(doctor).getPatientRecordIds(patient.address)).to.not.be.reverted;
+    const auditCount = await platform.getAccessLogCount(patient.address);
+    expect(auditCount).to.equal(1n);
+
+    const audit = await platform.getAccessLog(patient.address, 0);
+    expect(audit.doctor).to.equal(doctor.address);
+    expect(audit.purpose).to.equal("Cardiology review");
+    expect(audit.granted).to.equal(true);
+  });
+
 });

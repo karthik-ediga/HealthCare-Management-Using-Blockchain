@@ -28,6 +28,9 @@ const navigation = [
 
 const appointmentLabels = ["Awaiting response", "Confirmed", "Completed", "Cancelled"];
 const claimLabels = ["In review", "Approved", "Declined"];
+const DEFAULT_ACCESS_POLICY_SECONDS = 30 * 24 * 60 * 60;
+const API_BASE_URL = "http://localhost:3001";
+let apiSessionToken = "";
 
 // Sandbox demo accounts for zero-friction evaluation
 const DEMO_ACCOUNTS = {
@@ -78,6 +81,20 @@ function readableError(error) {
   return message.replace(/^execution reverted: /, "");
 }
 
+async function apiRequest(path, options = {}) {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...(apiSessionToken ? { Authorization: `Bearer ${apiSessionToken}` } : {}),
+      ...(options.headers || {})
+    }
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.message || "Healthcare API request failed.");
+  return data;
+}
+
 // Compute real cryptographic SHA-256 in browser
 async function computeSha256(data) {
   const enc = new TextEncoder();
@@ -92,6 +109,8 @@ function App() {
   const [account, setAccount] = useState("");
   const [chainId, setChainId] = useState(null);
   const [contract, setContract] = useState(null);
+  const [loginUser, setLoginUser] = useState(null);
+  const [loginError, setLoginError] = useState("");
   const [roles, setRoles] = useState({ admin: false, doctor: false, insurer: false, patient: true });
 
   // Local sample-data preview until a wallet is connected
@@ -104,6 +123,8 @@ function App() {
   const [accessRequests, setAccessRequests] = useState([]);
   const [claimPool, setClaimPool] = useState("1.0");
   const [authorizedDoctors, setAuthorizedDoctors] = useState([]);
+  const [doctorDirectory, setDoctorDirectory] = useState([]);
+  const [adminUsers, setAdminUsers] = useState([]);
 
   const [loading, setLoading] = useState(false);
   const [pending, setPending] = useState(false);
@@ -112,6 +133,24 @@ function App() {
 
   // Modal inspection state
   const [activeModalRecord, setActiveModalRecord] = useState(null);
+
+  const loadDatabaseDashboard = useCallback(async (user) => {
+    const dashboard = await apiRequest("/api/dashboard");
+    setRecords(dashboard.records || []);
+    setAppointments((dashboard.appointments || []).map((item) => ({
+      ...item,
+      fee: parseEther(String(item.fee))
+    })));
+    setClaims((dashboard.claims || []).map((item) => ({
+      ...item,
+      amount: parseEther(String(item.amountEth))
+    })));
+    setAccessRequests(dashboard.accessRequests || []);
+    setAuthorizedDoctors([...new Set((dashboard.accessLogs || []).map((item) => item.doctor))]);
+    setDoctorDirectory(dashboard.doctors || []);
+    setAdminUsers(dashboard.users || []);
+    return dashboard;
+  }, []);
 
   const notify = useCallback((kind, message) => {
     setToast({ kind, message });
@@ -409,16 +448,49 @@ function App() {
     }
   }, [notify, refresh]);
 
+  const handleLogin = async (email, password, selectedRole) => {
+    setLoginError("");
+
+    try {
+      const { user, token } = await apiRequest("/api/login", {
+        method: "POST",
+        body: JSON.stringify({
+          email: email.trim(),
+          password,
+          role: selectedRole
+        })
+      });
+      apiSessionToken = token;
+      await loadDatabaseDashboard(user);
+      setLoginUser(user);
+      setAccount(user.wallet || DEMO_ACCOUNTS[selectedRole]?.address || "");
+      setSandboxMode(true);
+      setRoles({
+        admin: user.role === "administrator",
+        doctor: user.role === "doctor",
+        insurer: false,
+        patient: user.role === "patient"
+      });
+      setChainId(31337);
+    } catch (error) {
+      apiSessionToken = "";
+      setLoginError(error.message || "Invalid email, password or role selection.");
+    }
+  };
+
   const disconnectWallet = () => {
+    apiSessionToken = "";
     setAccount("");
     setChainId(null);
     setContract(null);
+    setLoginUser(null);
+    setLoginError("");
     setSandboxMode(true);
     notify("success", "Wallet disconnected.");
   };
 
   useEffect(() => {
-    if (sandboxMode) {
+    if (sandboxMode && !loginUser) {
       initSandboxData();
       setAccount(DEMO_ACCOUNTS.patient.address);
       setRoles({
@@ -429,7 +501,18 @@ function App() {
       });
       setChainId(31337);
     }
-  }, [sandboxMode, initSandboxData]);
+
+    if (loginUser) {
+      setAccount(loginUser.wallet);
+      setRoles({
+        admin: loginUser.role === "administrator",
+        doctor: loginUser.role === "doctor",
+        insurer: false,
+        patient: loginUser.role === "patient"
+      });
+      setChainId(31337);
+    }
+  }, [sandboxMode, initSandboxData, loginUser]);
 
   // Universal transaction handler: executes on-chain or updates sandbox state
   const runTransaction = async (action, successMessage, sandboxFallback) => {
@@ -440,10 +523,9 @@ function App() {
         await transaction.wait();
         await refresh(contract, account);
       } else {
-        // Execute sandbox mock execution with slight delay for realistic Web3 feedback
-        await new Promise((r) => setTimeout(r, 600));
+        await new Promise((r) => setTimeout(r, 120));
         if (sandboxFallback) {
-          sandboxFallback();
+          await sandboxFallback();
         }
       }
       notify("success", successMessage);
@@ -464,10 +546,12 @@ function App() {
     ? "Insurer"
     : "Patient";
 
-  const displayNavigation = useMemo(
-    () => [...navigation, ...(roles.admin ? [{ id: "admin", label: "Administration", icon: Users }] : [])],
-    [roles.admin]
-  );
+  const displayNavigation = useMemo(() => {
+    const roleNavigation = roles.doctor
+      ? navigation.filter((item) => item.id !== "claims")
+      : navigation;
+    return [...roleNavigation, ...(roles.admin ? [{ id: "admin", label: "Administration", icon: Users }] : [])];
+  }, [roles.admin, roles.doctor]);
 
   const upcomingAppointments = appointments.filter((item) => Number(item.status) < 2);
   const pendingClaims = claims.filter((item) => Number(item.status) === 0);
@@ -477,6 +561,10 @@ function App() {
     setActiveView(view);
     setMobileNavOpen(false);
   };
+
+  if (!loginUser) {
+    return <LoginScreen onLogin={handleLogin} error={loginError} />;
+  }
 
   return (
     <div className="app-shell">
@@ -547,7 +635,7 @@ function App() {
             {account && (
               <span className="role-pill">
                 <span className="role-indicator" />
-                {sandboxMode ? `Patient: ${DEMO_ACCOUNTS.patient.name}` : `${roleName}: ${shortAddress(account)}`}
+                {sandboxMode ? `${roleName}: ${loginUser?.name || DEMO_ACCOUNTS.patient.name}` : `${roleName}: ${shortAddress(account)}`}
               </span>
             )}
             <button
@@ -571,7 +659,11 @@ function App() {
             </div>
             <button
               className="refresh-button"
-              onClick={() => (!sandboxMode && contract ? refresh(contract, account) : initSandboxData())}
+              onClick={() => (!sandboxMode && contract
+                ? refresh(contract, account)
+                : loginUser
+                ? loadDatabaseDashboard(loginUser).catch((error) => notify("error", error.message))
+                : initSandboxData())}
               disabled={loading}
               aria-label="Refresh data"
               title="Refresh data"
@@ -608,6 +700,8 @@ function App() {
           {activeView === "records" && (
             <RecordsView
               account={account}
+              userId={loginUser?.id}
+              sandboxMode={sandboxMode}
               records={records}
               roles={roles}
               pending={pending}
@@ -620,6 +714,7 @@ function App() {
           {activeView === "access" && (
             <AccessView
               account={account}
+              userId={loginUser?.id}
               roles={roles}
               contract={contract}
               sandboxMode={sandboxMode}
@@ -637,6 +732,8 @@ function App() {
           {activeView === "appointments" && (
             <AppointmentsView
               account={account}
+              userId={loginUser?.id}
+              doctors={doctorDirectory}
               roles={roles}
               sandboxMode={sandboxMode}
               appointments={appointments}
@@ -649,6 +746,8 @@ function App() {
           {activeView === "claims" && (
             <ClaimsView
               account={account}
+              userId={loginUser?.id}
+              sandboxMode={sandboxMode}
               roles={roles}
               claims={claims}
               claimPool={claimPool}
@@ -661,6 +760,8 @@ function App() {
 
           {activeView === "admin" && roles.admin && (
             <AdminView
+              users={adminUsers}
+              sandboxMode={sandboxMode}
               pending={pending}
               runTransaction={runTransaction}
               claimPool={claimPool}
@@ -695,7 +796,7 @@ function App() {
             <div className="modal-body">
               <div>
                 <span className={`category-badge ${RECORD_TYPES[activeModalRecord.recordType]?.class || "cat-history"}`}>
-                  {RECORD_TYPES[activeModalRecord.recordType]?.label || "Medical Record"}
+                  {activeModalRecord.category || RECORD_TYPES[activeModalRecord.recordType]?.label || "Medical Record"}
                 </span>
                 <h4 style={{ margin: "8px 0 4px", fontSize: "16px", color: "#1d382f" }}>
                   {activeModalRecord.title}
@@ -751,6 +852,146 @@ function App() {
           Broadcasting transaction to blockchain ledger...
         </div>
       )}
+    </div>
+  );
+}
+
+function LoginScreen({ onLogin, error }) {
+  const [email, setEmail] = useState("emma.patient@medledger.local");
+  const [password, setPassword] = useState("patient123");
+  const [selectedRole, setSelectedRole] = useState("patient");
+
+  const handleSubmit = (event) => {
+    event.preventDefault();
+    onLogin(email, password, selectedRole);
+  };
+
+  return (
+    <div style={{
+      minHeight: "100vh",
+      display: "grid",
+      placeItems: "center",
+      background: "linear-gradient(135deg, #edf8f3 0%, #eaf1ff 100%)",
+      padding: "24px"
+    }}>
+      <div style={{
+        width: "100%",
+        maxWidth: "460px",
+        background: "#ffffff",
+        borderRadius: "18px",
+        boxShadow: "0 18px 40px rgba(28, 55, 46, 0.12)",
+        border: "1px solid #dfece5",
+        padding: "28px"
+      }}>
+        <div style={{ textAlign: "center", marginBottom: "24px" }}>
+          <div style={{
+            width: "52px",
+            height: "52px",
+            margin: "0 auto 10px",
+            borderRadius: "14px",
+            background: "#dff6ea",
+            display: "grid",
+            placeItems: "center",
+            fontSize: "24px"
+          }}>
+            🩺
+          </div>
+          <h2 style={{ margin: 0, color: "#1d3d32", fontSize: "28px" }}>MedLedger</h2>
+          <p style={{ margin: "8px 0 0", color: "#5d7d72", fontSize: "13px" }}>
+            Secure healthcare access portal
+          </p>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: "10px", marginBottom: "18px" }}>
+          {[
+            { label: "Patient", value: "patient" },
+            { label: "Doctor", value: "doctor" },
+            { label: "Admin", value: "administrator" }
+          ].map((roleOption) => (
+            <button
+              key={roleOption.value}
+              type="button"
+              onClick={() => setSelectedRole(roleOption.value)}
+              style={{
+                border: selectedRole === roleOption.value ? "1px solid #2d7d63" : "1px solid #dfe9e4",
+                background: selectedRole === roleOption.value ? "#eaf9f1" : "#f8faf9",
+                color: "#1d3d32",
+                borderRadius: "10px",
+                padding: "10px 8px",
+                fontWeight: 600,
+                cursor: "pointer"
+              }}
+            >
+              {roleOption.label}
+            </button>
+          ))}
+        </div>
+
+        <form onSubmit={handleSubmit} style={{ display: "grid", gap: "14px" }}>
+          <label style={{ display: "grid", gap: "6px", fontSize: "12px", color: "#34554d", fontWeight: 600 }}>
+            Email
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              style={{
+                height: "42px",
+                padding: "0 12px",
+                borderRadius: "10px",
+                border: "1px solid #dfe8e3",
+                background: "#fbfdfc",
+                fontSize: "14px"
+              }}
+            />
+          </label>
+
+          <label style={{ display: "grid", gap: "6px", fontSize: "12px", color: "#34554d", fontWeight: 600 }}>
+            Password
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              style={{
+                height: "42px",
+                padding: "0 12px",
+                borderRadius: "10px",
+                border: "1px solid #dfe8e3",
+                background: "#fbfdfc",
+                fontSize: "14px"
+              }}
+            />
+          </label>
+
+          {error && (
+            <div style={{
+              background: "#fff1f2",
+              color: "#9c2d3d",
+              border: "1px solid #f4d5db",
+              borderRadius: "10px",
+              padding: "10px 12px",
+              fontSize: "12px"
+            }}>
+              {error}
+            </div>
+          )}
+
+          <button
+            type="submit"
+            style={{
+              height: "44px",
+              border: 0,
+              borderRadius: "10px",
+              background: "linear-gradient(135deg, #2a7f63 0%, #1d694d 100%)",
+              color: "#fff",
+              fontWeight: 700,
+              cursor: "pointer"
+            }}
+          >
+            Sign in
+          </button>
+        </form>
+
+      </div>
     </div>
   );
 }
@@ -936,6 +1177,8 @@ function Overview({
 // -------------------------------------------------------------
 function RecordsView({
   account,
+  userId,
+  sandboxMode,
   records,
   roles,
   pending,
@@ -951,7 +1194,7 @@ function RecordsView({
   const [selectedFile, setSelectedFile] = useState(null);
   const [activeFilter, setActiveFilter] = useState("all");
 
-  const isPatient = account && !roles.doctor && !roles.insurer;
+  const isPatient = roles.patient;
 
   // Real in-browser cryptographic hashing when a file or notes are provided
   const handleFileChange = async (event) => {
@@ -1005,11 +1248,21 @@ function RecordsView({
         }
         return Promise.reject(new Error("Contract unavailable"));
       },
-      "Encrypted medical record added to ledger.",
-      () => {
-        // Sandbox update
+      sandboxMode ? "Medical record saved to the patient database." : "Encrypted medical record added to ledger.",
+      async () => {
+        const result = await apiRequest("/api/records", {
+          method: "POST",
+          body: JSON.stringify({
+            userId,
+            title: title.trim(),
+            category: RECORD_TYPES[Number(recordType)].label,
+            description: description.trim(),
+            encryptedUri: uri.trim(),
+            digest: digest.trim()
+          })
+        });
         const newRecord = {
-          id: newRecordId,
+          id: result.id,
           patient: account,
           author: account,
           encryptedUri: uri.trim(),
@@ -1034,18 +1287,23 @@ function RecordsView({
 
   const filteredRecords = records.filter((r) => {
     if (activeFilter === "all") return true;
-    return Number(r.recordType) === Number(activeFilter);
+    const typeObj = RECORD_TYPES[Number(r.recordType)] || RECORD_TYPES[0];
+    return (r.category || typeObj.label) === activeFilter;
   });
+  const recordCategories = [...new Set(records.map((record) => (
+    record.category || RECORD_TYPES[Number(record.recordType)]?.label || "Medical History"
+  )))];
 
   return (
     <div className="content-stack">
       <div className="privacy-callout">
         <LockKeyhole size={17} />
         <div>
-          <strong>Keep clinical data off-chain (Zero Knowledge & IPFS)</strong>
+          <strong>{sandboxMode ? "Database demo record storage" : "Keep clinical data off-chain (Zero Knowledge & IPFS)"}</strong>
           <span>
-            Only encrypted storage references and SHA-256 checksums are stored on the blockchain. The browser
-            computes cryptographic hashes locally before broadcasting transactions.
+            {sandboxMode
+              ? "Record metadata and demo file references are saved to MySQL. The browser computes a SHA-256 checksum, but files are not uploaded or encrypted by this demo."
+              : "Only encrypted storage references and SHA-256 checksums are stored on the blockchain. The browser computes cryptographic hashes locally before broadcasting transactions."}
           </span>
         </div>
       </div>
@@ -1058,13 +1316,13 @@ function RecordsView({
         >
           All Records ({records.length})
         </button>
-        {RECORD_TYPES.map((t) => (
+        {recordCategories.map((category) => (
           <button
-            key={t.id}
-            className={`sandbox-role-btn ${activeFilter === String(t.id) ? "active" : ""}`}
-            onClick={() => setActiveFilter(String(t.id))}
+            key={category}
+            className={`sandbox-role-btn ${activeFilter === category ? "active" : ""}`}
+            onClick={() => setActiveFilter(category)}
           >
-            {t.label}
+            {category}
           </button>
         ))}
       </div>
@@ -1075,7 +1333,7 @@ function RecordsView({
             <span className="section-kicker">PATIENT MEDICAL LEDGER</span>
             <h2>Record references <span className="heading-count">{filteredRecords.length}</span></h2>
           </div>
-          <span className="immutable-tag"><Link2 size={13} /> IMMUTABLE LEDGER</span>
+          <span className="immutable-tag"><Link2 size={13} /> {sandboxMode ? "MYSQL RECORDS" : "IMMUTABLE LEDGER"}</span>
         </div>
 
         {filteredRecords.length ? (
@@ -1098,7 +1356,7 @@ function RecordsView({
                       <td>
                         <span className="record-file-icon"><FileLock2 size={16} /></span>
                         <div style={{ display: "inline-block", verticalAlign: "middle" }}>
-                          <span className={`category-badge ${typeObj.class}`}>{typeObj.label}</span>
+                          <span className={`category-badge ${typeObj.class}`}>{record.category || typeObj.label}</span>
                           <div className="record-id" style={{ marginTop: "2px" }}>
                             {record.title || `Record #${record.id.toString()}`}
                           </div>
@@ -1244,7 +1502,7 @@ function RecordsView({
                 <ShieldCheck size={14} /> Signed by patient wallet.
               </span>
               <button className="primary-button" disabled={!account || pending}>
-                <Plus size={16} /> Add to blockchain
+                <Plus size={16} /> {sandboxMode ? "Save record" : "Add to blockchain"}
               </button>
             </div>
           </form>
@@ -1265,6 +1523,7 @@ function RecordsView({
 // -------------------------------------------------------------
 function AccessView({
   account,
+  userId,
   roles,
   contract,
   sandboxMode,
@@ -1283,7 +1542,7 @@ function AccessView({
   const [lookupRecords, setLookupRecords] = useState([]);
   const [lookupLoading, setLookupLoading] = useState(false);
 
-  const isPatient = account && !roles.doctor && !roles.insurer;
+  const isPatient = roles.patient;
 
   // Patient grants or revokes direct access
   const handleSetAccess = async (doctorTarget, granted) => {
@@ -1293,12 +1552,27 @@ function AccessView({
     }
     await runTransaction(
       () => {
-        if (contract) return contract.setRecordAccess(doctorTarget, granted);
+        if (contract) {
+          if (typeof contract.setRecordAccessWithPolicy === "function") {
+            return contract.setRecordAccessWithPolicy(
+              doctorTarget,
+              granted,
+              granted ? DEFAULT_ACCESS_POLICY_SECONDS : 0,
+              granted ? "Patient-approved medical review" : ""
+            );
+          }
+          return contract.setRecordAccess(doctorTarget, granted);
+        }
         return Promise.reject(new Error("No contract"));
       },
-      granted ? "Clinician access granted on-chain." : "Clinician access revoked.",
-      () => {
-        // Sandbox update
+      sandboxMode
+        ? granted ? "Clinician access saved for 30 days." : "Clinician access revoked."
+        : granted ? "Clinician access granted on-chain with a 30-day consent window." : "Clinician access revoked.",
+      async () => {
+        await apiRequest("/api/access-grants", {
+          method: "POST",
+          body: JSON.stringify({ userId, doctorWallet: doctorTarget, granted })
+        });
         if (granted) {
           if (!authorizedDoctors.includes(doctorTarget)) {
             setAuthorizedDoctors([...authorizedDoctors, doctorTarget]);
@@ -1317,9 +1591,14 @@ function AccessView({
         if (contract) return contract.respondToAccessRequest(requestId, approve);
         return Promise.reject(new Error("No contract"));
       },
-      approve ? "Access request approved. Clinician authorized." : "Access request declined.",
-      () => {
-        // Sandbox update
+      sandboxMode
+        ? approve ? "Access request approved in the patient database." : "Access request declined."
+        : approve ? "Access request approved. Clinician authorized." : "Access request declined.",
+      async () => {
+        await apiRequest(`/api/access-requests/${requestId}`, {
+          method: "PATCH",
+          body: JSON.stringify({ userId, approved: approve })
+        });
         setAccessRequests(
           accessRequests.map((req) =>
             req.id === requestId ? { ...req, status: approve ? 1 : 2 } : req
@@ -1342,20 +1621,39 @@ function AccessView({
     }
     await runTransaction(
       () => {
-        if (contract) return contract.requestRecordAccess(patientLookupAddress, requestReason || "Medical review");
+        if (contract) {
+          if (typeof contract.requestRecordAccessWithPolicy === "function") {
+            return contract.requestRecordAccessWithPolicy(
+              patientLookupAddress,
+              requestReason || "Medical review",
+              DEFAULT_ACCESS_POLICY_SECONDS
+            );
+          }
+          return contract.requestRecordAccess(patientLookupAddress, requestReason || "Medical review");
+        }
         return Promise.reject(new Error("No contract"));
       },
-      "Access request sent to patient. Awaiting on-chain approval.",
-      () => {
+      sandboxMode ? "Database access request sent to patient." : "Access request sent to patient. Consent window set to 30 days.",
+      async () => {
+        const result = await apiRequest("/api/access-requests", {
+          method: "POST",
+          body: JSON.stringify({
+            userId,
+            patientWallet: patientLookupAddress,
+            reason: requestReason || "Medical review"
+          })
+        });
         const newReq = {
-          id: accessRequests.length + 1,
+          id: result.id,
           doctor: account,
           doctorName: DEMO_ACCOUNTS.doctor.name,
           specialty: DEMO_ACCOUNTS.doctor.specialty,
           patient: patientLookupAddress,
           reason: requestReason || "Consultation and medical history review",
           status: 0,
-          requestedAt: Math.floor(Date.now() / 1000)
+          requestedAt: Math.floor(Date.now() / 1000),
+          validForSeconds: DEFAULT_ACCESS_POLICY_SECONDS,
+          expiresAt: 0
         };
         setAccessRequests([newReq, ...accessRequests]);
         setRequestReason("");
@@ -1383,13 +1681,14 @@ function AccessView({
         );
         setLookupRecords(loaded);
       } else {
-        // Sandbox check
-        const isAuth = authorizedDoctors.some((d) => d.toLowerCase() === account.toLowerCase());
-        if (!isAuth) {
+        const patientRecords = records.filter(
+          (record) => record.patient?.toLowerCase() === patientLookupAddress.toLowerCase()
+        );
+        if (!patientRecords.length) {
           notify("error", "The patient has not granted this wallet access yet. Submit an access request below.");
           setLookupRecords([]);
         } else {
-          setLookupRecords(records);
+          setLookupRecords(patientRecords);
           notify("success", "Loaded authorized patient records.");
         }
       }
@@ -1407,10 +1706,11 @@ function AccessView({
       <div className="privacy-callout">
         <ShieldCheck size={17} />
         <div>
-          <strong>Consent Enforced by Smart Contract</strong>
+          <strong>{sandboxMode ? "Consent stored in the patient database" : "Consent Enforced by Smart Contract"}</strong>
           <span>
-            Doctors cannot view patient records without explicit on-chain authorization. When a patient revokes
-            access, smart contract view methods will revert with &apos;No patient authorization&apos;.
+            {sandboxMode
+              ? "Doctor record visibility follows active database consent. This demo does not submit consent changes to a blockchain."
+              : "Doctors cannot view patient records without explicit on-chain authorization. When a patient revokes access, smart contract view methods will revert with &apos;No patient authorization&apos;."}
           </span>
         </div>
       </div>
@@ -1656,18 +1956,27 @@ function SendIcon({ size }) {
 // -------------------------------------------------------------
 function AppointmentsView({
   account,
+  userId,
   roles,
   sandboxMode,
+  doctors,
   appointments,
   pending,
   runTransaction,
   setAppointments
 }) {
-  const [doctor, setDoctor] = useState(DEMO_ACCOUNTS.doctor.address);
+  const [doctor, setDoctor] = useState("");
   const [startsAt, setStartsAt] = useState("");
   const [fee, setFee] = useState("0.02");
 
-  const isPatient = account && !roles.doctor && !roles.insurer;
+  const isPatient = roles.patient;
+
+  useEffect(() => {
+    if (!doctor && doctors.length) {
+      setDoctor(doctors[0].address);
+      setFee(doctors[0].fee);
+    }
+  }, [doctor, doctors]);
 
   const book = async (event) => {
     event.preventDefault();
@@ -1679,10 +1988,14 @@ function AppointmentsView({
         const signer = await new BrowserProvider(window.ethereum).getSigner();
         return makeContract(signer).bookAppointment(doctor, timestamp, { value: parseEther(fee) });
       },
-      "Appointment booked! Fee is held in smart contract escrow.",
-      () => {
+      sandboxMode ? "Appointment saved to the database." : "Appointment booked! Fee is held in smart contract escrow.",
+      async () => {
+        const result = await apiRequest("/api/appointments", {
+          method: "POST",
+          body: JSON.stringify({ userId, doctorWallet: doctor, startsAt, fee })
+        });
         const newApt = {
-          id: appointments.length + 1,
+          id: result.id,
           patient: account,
           doctor,
           startsAt: timestamp,
@@ -1712,8 +2025,16 @@ function AppointmentsView({
         : label === "Complete"
         ? "Appointment completed! Escrow released to doctor."
         : "Appointment updated.",
-      () => {
-        // Sandbox update
+      async () => {
+        const actionName = action === "respondToAppointment"
+          ? label.toLowerCase()
+          : action === "cancelAppointment"
+          ? "cancel"
+          : "complete";
+        await apiRequest(`/api/appointments/${item.id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ userId, action: actionName })
+        });
         let newStatus = item.status;
         if (action === "respondToAppointment") newStatus = label === "Accept" ? 1 : 3;
         if (action === "cancelAppointment") newStatus = 3;
@@ -1733,66 +2054,38 @@ function AppointmentsView({
             <span className="section-kicker">VERIFIED CLINICIANS DIRECTORY</span>
             <h2>Choose a specialist</h2>
           </div>
-          <span className="escrow-tag"><ShieldCheck size={13} /> ON-CHAIN VERIFIED</span>
+          <span className="escrow-tag"><ShieldCheck size={13} /> {sandboxMode ? "REGISTERED DOCTORS" : "ON-CHAIN VERIFIED"}</span>
         </div>
         <div className="doctor-grid">
-          <div className="doctor-card">
-            <div className="doctor-card-header">
-              <div className="doctor-avatar"><Stethoscope size={20} /></div>
-              <div className="doctor-card-info">
-                <strong>{DEMO_ACCOUNTS.doctor.name}</strong>
-                <span>{DEMO_ACCOUNTS.doctor.specialty}</span>
+          {doctors.map((item) => (
+            <div className="doctor-card" key={item.id}>
+              <div className="doctor-card-header">
+                <div className="doctor-avatar"><Stethoscope size={20} /></div>
+                <div className="doctor-card-info">
+                  <strong>{item.name}</strong>
+                  <span>{item.specialty}</span>
+                </div>
+              </div>
+              <div style={{ fontSize: "10px", color: "#698177" }}>
+                License: {item.license} · {shortAddress(item.address)}
+              </div>
+              <div className="doctor-card-footer">
+                <span className="doctor-fee">{item.fee} ETH / consultation</span>
+                {isPatient && (
+                  <button
+                    className="secondary-button"
+                    style={{ minHeight: "28px", padding: "0 8px", fontSize: "10px" }}
+                    onClick={() => {
+                      setDoctor(item.address);
+                      setFee(item.fee);
+                    }}
+                  >
+                    {doctor === item.address ? "Selected" : "Select Doctor"}
+                  </button>
+                )}
               </div>
             </div>
-            <div style={{ fontSize: "10px", color: "#698177" }}>
-              License: {DEMO_ACCOUNTS.doctor.license} • 99.4% Patient Rating
-            </div>
-            <div className="doctor-card-footer">
-              <span className="doctor-fee">0.02 ETH / consultation</span>
-              {isPatient && (
-                <button
-                  className="secondary-button"
-                  style={{ minHeight: "28px", padding: "0 8px", fontSize: "10px" }}
-                  onClick={() => {
-                    setDoctor(DEMO_ACCOUNTS.doctor.address);
-                    setFee("0.02");
-                  }}
-                >
-                  Select Doctor
-                </button>
-              )}
-            </div>
-          </div>
-
-          {sandboxMode && (
-          <div className="doctor-card">
-            <div className="doctor-card-header">
-              <div className="doctor-avatar"><Stethoscope size={20} /></div>
-              <div className="doctor-card-info">
-                <strong>Dr. David Miller, MD</strong>
-                <span>Neurology & Diagnostics</span>
-              </div>
-            </div>
-            <div style={{ fontSize: "10px", color: "#698177" }}>
-              License: MED-NY-44120 • 98.7% Patient Rating
-            </div>
-            <div className="doctor-card-footer">
-              <span className="doctor-fee">0.035 ETH / consultation</span>
-              {isPatient && (
-                <button
-                  className="secondary-button"
-                  style={{ minHeight: "28px", padding: "0 8px", fontSize: "10px" }}
-                  onClick={() => {
-                    setDoctor("0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65");
-                    setFee("0.035");
-                  }}
-                >
-                  Select Doctor
-                </button>
-              )}
-            </div>
-          </div>
-          )}
+          ))}
         </div>
       </section>
 
@@ -1801,19 +2094,22 @@ function AppointmentsView({
           <div className="panel-heading">
             <div>
               <span className="section-kicker">NEW VISIT</span>
-              <h2>Book an appointment with escrow</h2>
+              <h2>{sandboxMode ? "Book an appointment" : "Book an appointment with escrow"}</h2>
             </div>
-            <span className="escrow-tag"><LockKeyhole size={13} /> ESCROW PROTECTED</span>
+            <span className="escrow-tag"><LockKeyhole size={13} /> {sandboxMode ? "DATABASE DEMO" : "ESCROW PROTECTED"}</span>
           </div>
           <form className="form-grid" onSubmit={book}>
             <label className="field">
-              Clinician Wallet
-              <input
-                required
-                value={doctor}
-                onChange={(event) => setDoctor(event.target.value)}
-                placeholder="0x…"
-              />
+              Selected Clinician
+              <select value={doctor} onChange={(event) => {
+                const selected = doctors.find((item) => item.address === event.target.value);
+                setDoctor(event.target.value);
+                if (selected) setFee(selected.fee);
+              }} required>
+                {doctors.map((item) => (
+                  <option value={item.address} key={item.id}>{item.name} · {item.specialty}</option>
+                ))}
+              </select>
             </label>
             <label className="field">
               Date and Time
@@ -1834,13 +2130,14 @@ function AppointmentsView({
                   min="0.0001"
                   step="0.0001"
                   value={fee}
+                  readOnly
                   onChange={(event) => setFee(event.target.value)}
                 />
                 <span>ETH</span>
               </span>
             </label>
             <div className="form-footer">
-              <span>Payment remains locked in smart contract until the consultation is concluded.</span>
+              <span>{sandboxMode ? "The demo saves the booking to MySQL and does not take payment." : "Payment remains locked in smart contract until the consultation is concluded."}</span>
               <button className="primary-button" disabled={!account || pending}>
                 <CalendarDays size={15} /> Book & Escrow Payment
               </button>
@@ -1864,7 +2161,7 @@ function AppointmentsView({
                 key={item.id}
                 item={item}
                 account={account}
-                actions={appointmentAction}
+                actions={roles.patient || roles.doctor ? appointmentAction : null}
                 pending={pending}
               />
             ))}
@@ -1935,7 +2232,7 @@ function AppointmentRow({ item, account, compact = false, actions, pending }) {
               Cancel & Refund
             </button>
           )}
-          {status === 1 && (
+          {status === 1 && !isPatient && (
             <button
               className="small-accept"
               disabled={pending || !visitStarted}
@@ -1956,6 +2253,8 @@ function AppointmentRow({ item, account, compact = false, actions, pending }) {
 // -------------------------------------------------------------
 function ClaimsView({
   account,
+  userId,
+  sandboxMode,
   roles,
   claims,
   claimPool,
@@ -1976,10 +2275,18 @@ function ClaimsView({
         const signer = await new BrowserProvider(window.ethereum).getSigner();
         return makeContract(signer).submitClaim(uri.trim(), parseEther(amount));
       },
-      "Insurance claim submitted. Queued for insurer smart contract review.",
-      () => {
+      sandboxMode ? "Insurance claim saved for administrator review." : "Insurance claim submitted. Queued for insurer smart contract review.",
+      async () => {
+        const result = await apiRequest("/api/claims", {
+          method: "POST",
+          body: JSON.stringify({
+            userId,
+            encryptedEvidenceUri: uri.trim(),
+            amount
+          })
+        });
         const newClaim = {
-          id: claims.length + 1,
+          id: result.id,
           patient: account,
           encryptedEvidenceUri: uri.trim(),
           amount: parseEther(amount),
@@ -1997,8 +2304,14 @@ function ClaimsView({
         const signer = await new BrowserProvider(window.ethereum).getSigner();
         return makeContract(signer).resolveClaim(item.id, approve);
       },
-      approve ? "Claim approved! Payment transferred from pool to patient." : "Claim declined.",
-      () => {
+      sandboxMode
+        ? approve ? "Claim approved in the database. No ETH was transferred." : "Claim declined."
+        : approve ? "Claim approved! Payment transferred from pool to patient." : "Claim declined.",
+      async () => {
+        await apiRequest(`/api/claims/${item.id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ userId, approved: approve })
+        });
         setClaims(
           claims.map((c) => (c.id === item.id ? { ...c, status: approve ? 1 : 2 } : c))
         );
@@ -2035,9 +2348,9 @@ function ClaimsView({
       <section className="pool-strip">
         <div>
           <span className="pool-label">INSURANCE LIQUIDITY POOL</span>
-          <strong>{Number(claimPool).toFixed(3)} <small>ETH AVAILABLE</small></strong>
+          <strong>{sandboxMode ? "Database demo · no ETH pool" : `${Number(claimPool).toFixed(3)} ETH AVAILABLE`}</strong>
         </div>
-        {(roles.insurer || roles.admin) && (
+        {!sandboxMode && (roles.insurer || roles.admin) && (
           <form onSubmit={fundPool}>
             <label className="visually-hidden" htmlFor="pool-amount">Amount to fund</label>
             <input
@@ -2053,6 +2366,9 @@ function ClaimsView({
               <ArrowDownLeft size={15} /> Fund Claims Pool
             </button>
           </form>
+        )}
+        {sandboxMode && (
+          <span className="pool-label">Database demo mode · no ETH is transferred</span>
         )}
       </section>
 
@@ -2122,14 +2438,14 @@ function ClaimsView({
                   status={claimLabels[Number(claim.status)] || "Unknown"}
                   tone={Number(claim.status) === 1 ? "green" : Number(claim.status) === 0 ? "amber" : "neutral"}
                 />
-                {roles.insurer && Number(claim.status) === 0 && (
+                {(roles.insurer || roles.admin) && Number(claim.status) === 0 && (
                   <div className="row-actions">
                     <button
                       className="small-accept"
                       disabled={pending}
                       onClick={() => claimAction(claim, true)}
                     >
-                      <Check size={14} /> Approve & Pay
+                      <Check size={14} /> {sandboxMode ? "Approve claim" : "Approve & Pay"}
                     </button>
                     <button
                       className="small-reject"
@@ -2158,7 +2474,7 @@ function ClaimsView({
 // -------------------------------------------------------------
 // VIEW 6: Network Administration
 // -------------------------------------------------------------
-function AdminView({ pending, runTransaction, claimPool }) {
+function AdminView({ users, sandboxMode, pending, runTransaction, claimPool }) {
   const [doctor, setDoctor] = useState("");
   const [insurer, setInsurer] = useState("");
 
@@ -2194,6 +2510,15 @@ function AdminView({ pending, runTransaction, claimPool }) {
         </div>
       </div>
 
+      {sandboxMode ? (
+        <div className="privacy-callout">
+          <Users size={17} />
+          <div>
+            <strong>Database account directory</strong>
+            <span>Network approvals require connecting the administrator wallet to the deployed contract.</span>
+          </div>
+        </div>
+      ) : (
       <div className="admin-grid">
         <section className="panel form-panel">
           <div className="panel-heading">
@@ -2243,12 +2568,37 @@ function AdminView({ pending, runTransaction, claimPool }) {
           </form>
         </section>
       </div>
+      )}
+
+      <section className="panel">
+        <div className="panel-heading">
+          <div>
+            <span className="section-kicker">REGISTERED ACCOUNTS</span>
+            <h2>Users <span className="heading-count">{users.length}</span></h2>
+          </div>
+        </div>
+        <div className="record-table-wrap">
+          <table className="data-table">
+            <thead><tr><th>NAME</th><th>EMAIL</th><th>ROLE</th><th>WALLET</th></tr></thead>
+            <tbody>
+              {users.map((user) => (
+                <tr key={user.id}>
+                  <td>{user.name}</td>
+                  <td>{user.email}</td>
+                  <td>{user.role}</td>
+                  <td className="mono-cell">{shortAddress(user.wallet)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
 
       <section className="panel" style={{ padding: "16px 18px" }}>
         <h3 style={{ margin: "0 0 10px", fontSize: "13px", color: "#224136" }}>Network Health Status</h3>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "10px", fontSize: "11px" }}>
-          <div>Claims Pool: <strong>{claimPool} ETH</strong></div>
-          <div>Contract Status: <strong style={{ color: "#2b7e64" }}>Active &amp; Operational</strong></div>
+          <div>Claims Pool: <strong>{sandboxMode ? "On-chain only" : `${claimPool} ETH`}</strong></div>
+          <div>Contract Status: <strong style={{ color: sandboxMode ? "#9b6730" : "#2b7e64" }}>{sandboxMode ? "Wallet not connected" : "Active &amp; Operational"}</strong></div>
         </div>
       </section>
     </div>

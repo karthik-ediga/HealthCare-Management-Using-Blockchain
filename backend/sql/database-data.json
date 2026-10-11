@@ -1,0 +1,405 @@
+{
+  "database": "Mediccal_data",
+  "warning": "Local demo snapshot. User passwords are seeded demo credentials; do not use real credentials.",
+  "sections": {
+    "Login": {
+      "accounts": [
+        {
+          "id": 1,
+          "name": "Emma Johnson",
+          "email": "emma.patient@medledger.local",
+          "password": "patient123",
+          "role": "patient",
+          "wallet": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
+        },
+        {
+          "id": 2,
+          "name": "Daniel Carter",
+          "email": "daniel.patient@medledger.local",
+          "password": "patient456",
+          "role": "patient",
+          "wallet": "0x4b0897b0513fDc7C541B6D9D7E7eE1ed9AB1D1B3"
+        },
+        {
+          "id": 3,
+          "name": "Noah Patel",
+          "email": "noah.patient@medledger.local",
+          "password": "patient789",
+          "role": "patient",
+          "wallet": "0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc"
+        },
+        {
+          "id": 4,
+          "name": "Aisha Rahman",
+          "email": "aisha.patient@medledger.local",
+          "password": "patient321",
+          "role": "patient",
+          "wallet": "0x8c1c302f0c9d99f8d3d1b6dffca994d87d4b8f45"
+        },
+        {
+          "id": 5,
+          "name": "Dr. Hannah Lee",
+          "email": "hannah.doctor@medledger.local",
+          "password": "doctor123",
+          "role": "doctor",
+          "wallet": "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC"
+        },
+        {
+          "id": 6,
+          "name": "Dr. Priya Shah",
+          "email": "priya.doctor@medledger.local",
+          "password": "doctor456",
+          "role": "doctor",
+          "wallet": "0x90F79bf6EB2c4f870365E785982E1f101E93b906"
+        },
+        {
+          "id": 7,
+          "name": "Dr. Marcus Reed",
+          "email": "marcus.doctor@medledger.local",
+          "password": "doctor789",
+          "role": "doctor",
+          "wallet": "0x15d34AaF54267DB7D3c7e4f502A0B4bd4C0f1e5a"
+        },
+        {
+          "id": 8,
+          "name": "System Admin",
+          "email": "admin@medledger.local",
+          "password": "admin123",
+          "role": "administrator",
+          "wallet": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+        }
+      ]
+    },
+    "Overview": {
+      "users": 8,
+      "patients": 4,
+      "doctors": 3,
+      "medicalRecords": 8,
+      "appointments": 6,
+      "pendingAccessRequests": 1,
+      "insuranceClaims": 3
+    },
+    "Patient profiles": [
+      {
+        "user_id": 1,
+        "blood_group": "O+",
+        "emergency_contact": "+1 555 010 222",
+        "allergies": "Penicillin"
+      },
+      {
+        "user_id": 2,
+        "blood_group": "A-",
+        "emergency_contact": "+1 555 010 334",
+        "allergies": "Peanuts, Sulfa drugs"
+      },
+      {
+        "user_id": 3,
+        "blood_group": "B+",
+        "emergency_contact": "+1 555 010 556",
+        "allergies": "Latex"
+      },
+      {
+        "user_id": 4,
+        "blood_group": "AB-",
+        "emergency_contact": "+1 555 010 778",
+        "allergies": "None noted"
+      }
+    ],
+    "Doctor directory": [
+      {
+        "user_id": 5,
+        "specialty": "Cardiology & Internal Medicine",
+        "license_number": "MED-CA-88349",
+        "consultation_fee": "0.02 ETH"
+      },
+      {
+        "user_id": 6,
+        "specialty": "Endocrinology",
+        "license_number": "MED-EN-20418",
+        "consultation_fee": "0.018 ETH"
+      },
+      {
+        "user_id": 7,
+        "specialty": "Orthopedics",
+        "license_number": "MED-OR-77112",
+        "consultation_fee": "0.024 ETH"
+      }
+    ],
+    "Medical records": [
+      {
+        "id": 1,
+        "patient_id": 1,
+        "author_id": 1,
+        "title": "Annual Wellness Medical History",
+        "category": "Medical History",
+        "description": "No major issues. Blood pressure stable. Annual screening due in Q4.",
+        "encrypted_uri": "ipfs://bafybeihdwdcefgh456789alicecardio",
+        "digest": "0x8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+        "created_at": "2026-10-09T19:01:32.000Z"
+      },
+      {
+        "id": 2,
+        "patient_id": 1,
+        "author_id": 5,
+        "title": "Lipid Panel Report",
+        "category": "Lab Report",
+        "description": "HDL 58 mg/dL, LDL 112 mg/dL, triglycerides 140 mg/dL.",
+        "encrypted_uri": "ipfs://bafybeigrx998234prescriptiondrch",
+        "digest": "0x3b9a5286cd6e695d7f12e873b22b6a98299292a1040ef3dd2e7f415cba27931c",
+        "created_at": "2026-10-09T19:01:32.000Z"
+      },
+      {
+        "id": 3,
+        "patient_id": 1,
+        "author_id": 5,
+        "title": "Atorvastatin Prescription",
+        "category": "Prescription",
+        "description": "Take 10 mg daily after dinner. Follow-up consultation in 6 weeks.",
+        "encrypted_uri": "ipfs://bafybeiclinicalnoteafternoonreview",
+        "digest": "0x9a1112dc7eb8a87c12d6a8f3933cfd1fc4748f44f107e2f7433d16f3bd35d9be",
+        "created_at": "2026-10-09T19:01:32.000Z"
+      },
+      {
+        "id": 4,
+        "patient_id": 2,
+        "author_id": 2,
+        "title": "Diabetes Care Plan",
+        "category": "Medical History",
+        "description": "Type 2 diabetes management plan includes nutrition and exercise coaching.",
+        "encrypted_uri": "ipfs://bafybeidialysisreviewmondayplan",
+        "digest": "0x2fd91ec0dd0ba07cf897cdad1caed1d1c009d2b1bf4d7f5487a1d0c9f3438d91",
+        "created_at": "2026-10-09T19:01:32.000Z"
+      },
+      {
+        "id": 5,
+        "patient_id": 2,
+        "author_id": 6,
+        "title": "HbA1c Lab Results",
+        "category": "Lab Report",
+        "description": "HbA1c reduced from 8.4% to 7.1% after medication optimization.",
+        "encrypted_uri": "ipfs://bafybeiglucosepanelreview",
+        "digest": "0x6d9f87f1f4ed3d80b1ad3b2d12d4991bbb7d4d861d3cc9570afa0b80cb4027d9",
+        "created_at": "2026-10-09T19:01:32.000Z"
+      },
+      {
+        "id": 6,
+        "patient_id": 3,
+        "author_id": 3,
+        "title": "Orthopedic Injury Summary",
+        "category": "Clinical Note",
+        "description": "Lower back pain reported after lifting; physiotherapy referral issued.",
+        "encrypted_uri": "ipfs://bafybeimobilitynotesummary",
+        "digest": "0x91c0eafebea2eb68f9b5b4d9db6f7d5eb2368c7e68d6b0c3697ba6d9eaf2edb9",
+        "created_at": "2026-10-09T19:01:32.000Z"
+      },
+      {
+        "id": 7,
+        "patient_id": 3,
+        "author_id": 7,
+        "title": "X-Ray Follow-Up",
+        "category": "Imaging",
+        "description": "No fracture detected. Mild disc inflammation noted on L4-L5.",
+        "encrypted_uri": "ipfs://bafybeixrayfollowupmedial",
+        "digest": "0x2a3ec41ca1006de411d9e84f2c843b8d2d0f1ea74469998a53cf41cfe620500a",
+        "created_at": "2026-10-09T19:01:32.000Z"
+      },
+      {
+        "id": 8,
+        "patient_id": 4,
+        "author_id": 4,
+        "title": "Postpartum Checkup",
+        "category": "Medical History",
+        "description": "Patient reports fatigue and anemia screening ordered for follow-up.",
+        "encrypted_uri": "ipfs://bafybeimaternalcarefollowup",
+        "digest": "0x44f1b09dfca3ce545d4358b9f9a1237c3709fa5f4d6d042ba6af073ee7dbd4aa",
+        "created_at": "2026-10-09T19:01:32.000Z"
+      }
+    ],
+    "Appointments": [
+      {
+        "id": 1,
+        "patient_id": 1,
+        "doctor_id": 5,
+        "starts_at": "2026-10-12T19:01:32.000Z",
+        "fee": "0.02000000",
+        "status": "pending",
+        "created_at": "2026-10-09T19:01:32.000Z"
+      },
+      {
+        "id": 2,
+        "patient_id": 1,
+        "doctor_id": 5,
+        "starts_at": "2026-10-06T19:01:32.000Z",
+        "fee": "0.02000000",
+        "status": "completed",
+        "created_at": "2026-10-09T19:01:32.000Z"
+      },
+      {
+        "id": 3,
+        "patient_id": 2,
+        "doctor_id": 6,
+        "starts_at": "2026-10-14T19:01:32.000Z",
+        "fee": "0.01800000",
+        "status": "accepted",
+        "created_at": "2026-10-09T19:01:32.000Z"
+      },
+      {
+        "id": 4,
+        "patient_id": 2,
+        "doctor_id": 6,
+        "starts_at": "2026-10-02T19:01:32.000Z",
+        "fee": "0.01800000",
+        "status": "completed",
+        "created_at": "2026-10-09T19:01:32.000Z"
+      },
+      {
+        "id": 5,
+        "patient_id": 3,
+        "doctor_id": 7,
+        "starts_at": "2026-10-11T19:01:32.000Z",
+        "fee": "0.02400000",
+        "status": "pending",
+        "created_at": "2026-10-09T19:01:32.000Z"
+      },
+      {
+        "id": 6,
+        "patient_id": 4,
+        "doctor_id": 5,
+        "starts_at": "2026-09-29T19:01:32.000Z",
+        "fee": "0.02000000",
+        "status": "cancelled",
+        "created_at": "2026-10-09T19:01:32.000Z"
+      }
+    ],
+    "Access control": {
+      "requests": [
+        {
+          "id": 1,
+          "patient_id": 1,
+          "doctor_id": 5,
+          "reason": "Review cholesterol trends for medication update",
+          "status": "approved",
+          "requested_at": "2026-10-09T19:01:32.000Z"
+        },
+        {
+          "id": 2,
+          "patient_id": 2,
+          "doctor_id": 6,
+          "reason": "Request access to glucose monitoring history",
+          "status": "pending",
+          "requested_at": "2026-10-09T19:01:32.000Z"
+        },
+        {
+          "id": 3,
+          "patient_id": 3,
+          "doctor_id": 7,
+          "reason": "Assess recovery plan after ligament strain",
+          "status": "approved",
+          "requested_at": "2026-10-09T19:01:32.000Z"
+        },
+        {
+          "id": 4,
+          "patient_id": 4,
+          "doctor_id": 5,
+          "reason": "Consent for postpartum wellness checkup",
+          "status": "rejected",
+          "requested_at": "2026-10-09T19:01:32.000Z"
+        }
+      ],
+      "logs": [
+        {
+          "id": 1,
+          "patient_id": 1,
+          "doctor_id": 5,
+          "purpose": "Cardiology review",
+          "granted": 1,
+          "expires_at": "2026-11-08T19:01:32.000Z",
+          "created_at": "2026-10-09T19:01:32.000Z"
+        },
+        {
+          "id": 2,
+          "patient_id": 1,
+          "doctor_id": 6,
+          "purpose": "Second opinion on diabetic labs",
+          "granted": 1,
+          "expires_at": "2026-10-29T19:01:32.000Z",
+          "created_at": "2026-10-09T19:01:32.000Z"
+        },
+        {
+          "id": 3,
+          "patient_id": 2,
+          "doctor_id": 6,
+          "purpose": "Endocrinology consultation",
+          "granted": 1,
+          "expires_at": "2026-11-23T19:01:32.000Z",
+          "created_at": "2026-10-09T19:01:32.000Z"
+        },
+        {
+          "id": 4,
+          "patient_id": 3,
+          "doctor_id": 7,
+          "purpose": "Orthopedic imaging review",
+          "granted": 1,
+          "expires_at": "2026-10-24T19:01:32.000Z",
+          "created_at": "2026-10-09T19:01:32.000Z"
+        },
+        {
+          "id": 5,
+          "patient_id": 4,
+          "doctor_id": 5,
+          "purpose": "Follow-up after maternity observation",
+          "granted": 1,
+          "expires_at": "2026-11-03T19:01:32.000Z",
+          "created_at": "2026-10-09T19:01:32.000Z"
+        }
+      ]
+    },
+    "Insurance claims": [
+      {
+        "id": 1,
+        "patient_id": 1,
+        "insurer_name": "BlueCross Health",
+        "claim_number": "BC-2026-1041",
+        "claim_amount": "0.01500000",
+        "encrypted_evidence_uri": "ipfs://bafybeiclaimproof8984920evidence",
+        "reason": "Cardiology consultation and lab coverage",
+        "status": "approved",
+        "created_at": "2026-10-09T19:01:32.000Z"
+      },
+      {
+        "id": 2,
+        "patient_id": 2,
+        "insurer_name": "CareSecure Plus",
+        "claim_number": "CS-2026-2189",
+        "claim_amount": "0.02000000",
+        "encrypted_evidence_uri": "ipfs://bafybeiclearclaimlabinvoice2026",
+        "reason": "Diabetes monitoring and insulin prescription",
+        "status": "pending",
+        "created_at": "2026-10-09T19:01:32.000Z"
+      },
+      {
+        "id": 3,
+        "patient_id": 4,
+        "insurer_name": "National Care Cover",
+        "claim_number": "NC-2026-3002",
+        "claim_amount": "0.01100000",
+        "encrypted_evidence_uri": "ipfs://bafybeimissedfollowupcareinvoice",
+        "reason": "Prenatal follow-up and diagnostic screening",
+        "status": "paid",
+        "created_at": "2026-10-09T19:01:32.000Z"
+      }
+    ],
+    "Administration": {
+      "administratorAccounts": [
+        {
+          "id": 8,
+          "name": "System Admin",
+          "email": "admin@medledger.local",
+          "password": "admin123",
+          "role": "administrator",
+          "wallet": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+        }
+      ]
+    }
+  }
+}
