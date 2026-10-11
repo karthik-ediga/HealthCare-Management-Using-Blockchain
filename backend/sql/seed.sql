@@ -1,5 +1,3 @@
-USE `Mediccal_data`;
-
 INSERT INTO users (name, email, password, role, wallet) VALUES
   ('Emma Johnson', 'emma.patient@medledger.local', 'patient123', 'patient', '0x70997970C51812dc3A010C7d01b50e0d17dc79C8'),
   ('Daniel Carter', 'daniel.patient@medledger.local', 'patient456', 'patient', '0x4b0897b0513fDc7C541B6D9D7E7eE1ed9AB1D1B3'),
