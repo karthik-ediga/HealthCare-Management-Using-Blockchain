@@ -76,8 +76,7 @@
       "doctors": 3,
       "medicalRecords": 8,
       "appointments": 6,
-      "pendingAccessRequests": 1,
-      "insuranceClaims": 3
+      "pendingAccessRequests": 1
     },
     "Patient profiles": [
       {
@@ -354,41 +353,7 @@
         }
       ]
     },
-    "Insurance claims": [
-      {
-        "id": 1,
-        "patient_id": 1,
-        "insurer_name": "BlueCross Health",
-        "claim_number": "BC-2026-1041",
-        "claim_amount": "0.01500000",
-        "encrypted_evidence_uri": "ipfs://bafybeiclaimproof8984920evidence",
-        "reason": "Cardiology consultation and lab coverage",
-        "status": "approved",
-        "created_at": "2026-10-09T19:01:32.000Z"
-      },
-      {
-        "id": 2,
-        "patient_id": 2,
-        "insurer_name": "CareSecure Plus",
-        "claim_number": "CS-2026-2189",
-        "claim_amount": "0.02000000",
-        "encrypted_evidence_uri": "ipfs://bafybeiclearclaimlabinvoice2026",
-        "reason": "Diabetes monitoring and insulin prescription",
-        "status": "pending",
-        "created_at": "2026-10-09T19:01:32.000Z"
-      },
-      {
-        "id": 3,
-        "patient_id": 4,
-        "insurer_name": "National Care Cover",
-        "claim_number": "NC-2026-3002",
-        "claim_amount": "0.01100000",
-        "encrypted_evidence_uri": "ipfs://bafybeimissedfollowupcareinvoice",
-        "reason": "Prenatal follow-up and diagnostic screening",
-        "status": "paid",
-        "created_at": "2026-10-09T19:01:32.000Z"
-      }
-    ],
+
     "Administration": {
       "administratorAccounts": [
         {

@@ -62,19 +62,6 @@ CREATE TABLE IF NOT EXISTS access_logs (
   FOREIGN KEY (doctor_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
-CREATE TABLE IF NOT EXISTS insurance_claims (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  patient_id INT NOT NULL,
-  insurer_name VARCHAR(120) NOT NULL,
-  claim_number VARCHAR(100) NOT NULL UNIQUE,
-  claim_amount DECIMAL(18,8) NOT NULL DEFAULT 0.00000000,
-  encrypted_evidence_uri VARCHAR(255),
-  reason TEXT,
-  status ENUM('pending', 'approved', 'paid', 'rejected') DEFAULT 'pending',
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (patient_id) REFERENCES users(id) ON DELETE CASCADE
-);
-
 CREATE TABLE IF NOT EXISTS access_requests (
   id INT AUTO_INCREMENT PRIMARY KEY,
   patient_id INT NOT NULL,

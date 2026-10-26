@@ -1,13 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { BrowserProvider, formatEther, isAddress, parseEther } from "ethers";
 import {
   Activity, ArrowDownLeft, ArrowUpRight, BadgeCheck, CalendarDays,
-  Check, ChevronDown, CircleAlert, ClipboardList, Clock3, Eye, FileLock2,
+  Check, ChevronDown, CircleAlert, Clock3, Eye, FileLock2,
   FilePlus2, FileText, HeartPulse, HelpCircle, LayoutDashboard, Link2,
   LockKeyhole, LogOut, Menu, Plus, RefreshCw, Search, ShieldAlert,
-  ShieldCheck, Stethoscope, UploadCloud, Users, Wallet, X, XCircle
+  ShieldCheck, Stethoscope, UploadCloud, Users, X, XCircle, KeyRound, UserCheck
 } from "lucide-react";
-import { contractAddress, makeContract } from "./contract.js";
 
 // Record category definitions
 export const RECORD_TYPES = [
@@ -22,63 +20,16 @@ const navigation = [
   { id: "overview", label: "Overview", icon: LayoutDashboard },
   { id: "records", label: "Medical records", icon: FileLock2 },
   { id: "access", label: "Access control", icon: ShieldCheck },
-  { id: "appointments", label: "Appointments", icon: CalendarDays },
-  { id: "claims", label: "Insurance claims", icon: ClipboardList }
+  { id: "appointments", label: "Appointments", icon: CalendarDays }
 ];
 
 const appointmentLabels = ["Awaiting response", "Confirmed", "Completed", "Cancelled"];
-const claimLabels = ["In review", "Approved", "Declined"];
 const DEFAULT_ACCESS_POLICY_SECONDS = 30 * 24 * 60 * 60;
 const API_BASE_URL = import.meta.env.VITE_API_URL ?? (import.meta.env.DEV ? "http://localhost:3001" : "");
 let apiSessionToken = "";
 
-// Sandbox demo accounts for zero-friction evaluation
-const DEMO_ACCOUNTS = {
-  patient: {
-    address: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
-    name: "Alice Smith",
-    roleName: "Patient",
-    blood: "O+",
-    allergies: "Penicillin"
-  },
-  doctor: {
-    address: "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
-    name: "Dr. Sarah Chen, MD",
-    roleName: "Clinician",
-    specialty: "Cardiology & Internal Medicine",
-    license: "MED-CA-88349",
-    fee: "0.02"
-  },
-  consultant: {
-    address: "0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65",
-    name: "Dr. David Miller, MD",
-    roleName: "Consultant",
-    specialty: "Neurology & Diagnostics",
-    license: "MED-NY-44120",
-    fee: "0.035"
-  },
-  insurer: {
-    address: "0x90F79bf6EB2c4f870365E785982E1f101E93b906",
-    name: "MetHealth Insurer",
-    roleName: "Insurer",
-    organization: "MetHealth Global Health Plan"
-  },
-  admin: {
-    address: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
-    name: "Protocol Admin",
-    roleName: "Administrator"
-  }
-};
-
-function shortAddress(address = "") {
-  return address ? `${address.slice(0, 6)}…${address.slice(-4)}` : "";
-}
-
 function readableError(error) {
-  const message = error?.shortMessage || error?.reason || error?.message || "Transaction failed";
-  if (message.includes("user rejected")) return "Transaction was cancelled in your wallet.";
-  if (message.includes("No patient authorization")) return "The patient has not granted this wallet access.";
-  return message.replace(/^execution reverted: /, "");
+  return error?.message || "The request could not be completed.";
 }
 
 async function apiRequest(path, options = {}) {
@@ -106,24 +57,18 @@ async function computeSha256(data) {
 
 function App() {
   const [activeView, setActiveView] = useState("overview");
-  const [account, setAccount] = useState("");
-  const [chainId, setChainId] = useState(null);
-  const [contract, setContract] = useState(null);
   const [loginUser, setLoginUser] = useState(null);
   const [loginError, setLoginError] = useState("");
-  const [roles, setRoles] = useState({ admin: false, doctor: false, insurer: false, patient: true });
+  const [roles, setRoles] = useState({ admin: false, doctor: false, patient: true });
 
-  // Local sample-data preview until a wallet is connected
-  const [sandboxMode, setSandboxMode] = useState(true);
-
-  // On-chain / Demo state
+  // Database-backed state
   const [records, setRecords] = useState([]);
   const [appointments, setAppointments] = useState([]);
-  const [claims, setClaims] = useState([]);
   const [accessRequests, setAccessRequests] = useState([]);
-  const [claimPool, setClaimPool] = useState("1.0");
   const [authorizedDoctors, setAuthorizedDoctors] = useState([]);
+  const [accessLogs, setAccessLogs] = useState([]);
   const [doctorDirectory, setDoctorDirectory] = useState([]);
+  const [patientDirectory, setPatientDirectory] = useState([]);
   const [adminUsers, setAdminUsers] = useState([]);
 
   const [loading, setLoading] = useState(false);
@@ -135,318 +80,30 @@ function App() {
   const [activeModalRecord, setActiveModalRecord] = useState(null);
 
   const loadDatabaseDashboard = useCallback(async (user) => {
-    const dashboard = await apiRequest("/api/dashboard");
-    setRecords(dashboard.records || []);
-    setAppointments((dashboard.appointments || []).map((item) => ({
-      ...item,
-      fee: parseEther(String(item.fee))
-    })));
-    setClaims((dashboard.claims || []).map((item) => ({
-      ...item,
-      amount: parseEther(String(item.amountEth))
-    })));
-    setAccessRequests(dashboard.accessRequests || []);
-    setAuthorizedDoctors([...new Set((dashboard.accessLogs || []).map((item) => item.doctor))]);
-    setDoctorDirectory(dashboard.doctors || []);
-    setAdminUsers(dashboard.users || []);
-    return dashboard;
+    setLoading(true);
+    try {
+      const dashboard = await apiRequest("/api/dashboard");
+      setRecords(dashboard.records || []);
+      setAppointments((dashboard.appointments || []).map((item) => ({
+        ...item,
+        fee: Number(item.fee)
+      })));
+      setAccessRequests(dashboard.accessRequests || []);
+      setAccessLogs(dashboard.accessLogs || []);
+      setAuthorizedDoctors([...new Set((dashboard.accessLogs || []).filter(item => item.granted).map((item) => item.doctorId))]);
+      setDoctorDirectory(dashboard.doctors || []);
+      setPatientDirectory(dashboard.patients || []);
+      setAdminUsers(dashboard.users || []);
+      return dashboard;
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   const notify = useCallback((kind, message) => {
     setToast({ kind, message });
     window.setTimeout(() => setToast(null), 4500);
   }, []);
-
-  // Initialize sandbox with realistic baseline data
-  const initSandboxData = useCallback(() => {
-    const demoRecords = [
-      {
-        id: 1,
-        patient: DEMO_ACCOUNTS.patient.address,
-        author: DEMO_ACCOUNTS.patient.address,
-        encryptedUri: "ipfs://bafybeihdwdcefgh456789alicecardio",
-        digest: "0x8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
-        recordType: 1,
-        title: "Comprehensive Lipid & Cardiac Biomarker Panel",
-        description: "HDL 58 mg/dL, LDL 112 mg/dL, Triglycerides 140 mg/dL, hs-CRP normal.",
-        createdAt: Math.floor(Date.now() / 1000) - 86400 * 9
-      },
-      {
-        id: 2,
-        patient: DEMO_ACCOUNTS.patient.address,
-        author: DEMO_ACCOUNTS.doctor.address,
-        encryptedUri: "ipfs://bafybeigrx998234prescriptiondrch",
-        digest: "0x3b9a5286cd6e695d7f12e873b22b6a98299292a1040ef3dd2e7f415cba27931c",
-        recordType: 2,
-        title: "Atorvastatin 10mg Daily Prescription",
-        description: "Take 10mg daily with dinner. Follow-up consultation in 6 weeks.",
-        createdAt: Math.floor(Date.now() / 1000) - 86400 * 6
-      },
-      {
-        id: 3,
-        patient: DEMO_ACCOUNTS.patient.address,
-        author: DEMO_ACCOUNTS.doctor.address,
-        encryptedUri: "ipfs://bafybeiclinicalnoteafternoonreview",
-        digest: "0x9a1112dc7eb8a87c12d6a8f3933cfd1fc4748f44f107e2f7433d16f3bd35d9be",
-        recordType: 3,
-        title: "Post-Visit Consultation Summary",
-        description: "Reviewed chest discomfort symptoms, advised stress test and routine bloodwork.",
-        createdAt: Math.floor(Date.now() / 1000) - 86400 * 4
-      },
-      {
-        id: 4,
-        patient: DEMO_ACCOUNTS.patient.address,
-        author: DEMO_ACCOUNTS.patient.address,
-        encryptedUri: "ipfs://bafybeimhmedicalhistorywellnessreview",
-        digest: "0x8db0b70ed9469f0e5c86c937cfadaf1d0688ec7b1a4e0cad16867f6d8cc96af3",
-        recordType: 0,
-        title: "Annual Wellness Medical History",
-        description: "No known allergies beyond penicillin; blood pressure stable; annual screening due in Q4.",
-        createdAt: Math.floor(Date.now() / 1000) - 86400 * 12
-      },
-      {
-        id: 5,
-        patient: DEMO_ACCOUNTS.patient.address,
-        author: DEMO_ACCOUNTS.consultant.address,
-        encryptedUri: "ipfs://bafybeineurologyeegsummarymrn",
-        digest: "0x41d1677e0a5cb6c8c0171d4d8ff76bcf2e2d1a0dbd180e8a4b8fa7a83678d31a",
-        recordType: 1,
-        title: "EEG & Neurology Diagnostic Summary",
-        description: "Routine neurological screening indicates normal baseline with no acute concerns.",
-        createdAt: Math.floor(Date.now() / 1000) - 86400 * 2
-      }
-    ];
-
-    const demoAppointments = [
-      {
-        id: 1,
-        patient: DEMO_ACCOUNTS.patient.address,
-        doctor: DEMO_ACCOUNTS.doctor.address,
-        startsAt: Math.floor(Date.now() / 1000) + 86400 * 3,
-        fee: parseEther("0.02"),
-        status: 1
-      },
-      {
-        id: 2,
-        patient: DEMO_ACCOUNTS.patient.address,
-        doctor: DEMO_ACCOUNTS.consultant.address,
-        startsAt: Math.floor(Date.now() / 1000) + 86400 * 5,
-        fee: parseEther("0.035"),
-        status: 0
-      },
-      {
-        id: 3,
-        patient: DEMO_ACCOUNTS.patient.address,
-        doctor: DEMO_ACCOUNTS.doctor.address,
-        startsAt: Math.floor(Date.now() / 1000) - 86400 * 3,
-        fee: parseEther("0.02"),
-        status: 2
-      }
-    ];
-
-    const demoClaims = [
-      {
-        id: 1,
-        patient: DEMO_ACCOUNTS.patient.address,
-        encryptedEvidenceUri: "ipfs://bafybeiclaimproof8984920evidence",
-        amount: parseEther("0.015"),
-        status: 0
-      },
-      {
-        id: 2,
-        patient: DEMO_ACCOUNTS.patient.address,
-        encryptedEvidenceUri: "ipfs://bafybeiclearclaimlabinvoice2026",
-        amount: parseEther("0.02"),
-        status: 1
-      },
-      {
-        id: 3,
-        patient: DEMO_ACCOUNTS.patient.address,
-        encryptedEvidenceUri: "ipfs://bafybeimissedfollowupcareinvoice",
-        amount: parseEther("0.011"),
-        status: 2
-      }
-    ];
-
-    const demoRequests = [
-      {
-        id: 1,
-        doctor: DEMO_ACCOUNTS.doctor.address,
-        doctorName: DEMO_ACCOUNTS.doctor.name,
-        specialty: DEMO_ACCOUNTS.doctor.specialty,
-        patient: DEMO_ACCOUNTS.patient.address,
-        reason: "Cardiology assessment & lipid monitoring review",
-        status: 0,
-        requestedAt: Math.floor(Date.now() / 1000) - 3600 * 3
-      },
-      {
-        id: 2,
-        doctor: DEMO_ACCOUNTS.consultant.address,
-        doctorName: DEMO_ACCOUNTS.consultant.name,
-        specialty: DEMO_ACCOUNTS.consultant.specialty,
-        patient: DEMO_ACCOUNTS.patient.address,
-        reason: "Neurology follow-up and diagnostic review",
-        status: 1,
-        requestedAt: Math.floor(Date.now() / 1000) - 3600 * 12
-      },
-      {
-        id: 3,
-        doctor: DEMO_ACCOUNTS.doctor.address,
-        doctorName: DEMO_ACCOUNTS.doctor.name,
-        specialty: DEMO_ACCOUNTS.doctor.specialty,
-        patient: DEMO_ACCOUNTS.patient.address,
-        reason: "Medication reconciliation after annual screening",
-        status: 2,
-        requestedAt: Math.floor(Date.now() / 1000) - 3600 * 30
-      }
-    ];
-
-    setRecords(demoRecords);
-    setAppointments(demoAppointments);
-    setClaims(demoClaims);
-    setAccessRequests(demoRequests);
-    setAuthorizedDoctors([DEMO_ACCOUNTS.doctor.address, DEMO_ACCOUNTS.consultant.address]);
-    setClaimPool("1.25");
-  }, []);
-
-  // Synchronize on-chain data when contract & MetaMask are active
-  const refresh = useCallback(async (activeContract, activeAccount) => {
-    if (!activeContract || !activeAccount) return;
-    setLoading(true);
-    try {
-      const [owner, doctor, insurer, network, ownRecordIds, nextAppointment, nextClaim, nextReq, pool, doctorDirectory] = await Promise.all([
-        activeContract.owner(),
-        activeContract.approvedDoctors(activeAccount),
-        activeContract.approvedInsurers(activeAccount),
-        activeContract.runner.provider.getNetwork(),
-        activeContract.getPatientRecordIds(activeAccount).catch(() => []),
-        activeContract.nextAppointmentId(),
-        activeContract.nextClaimId(),
-        activeContract.nextRequestId().catch(() => 1n),
-        activeContract.claimPoolBalance(),
-        activeContract.getDoctorDirectory().catch(() => [])
-      ]);
-
-      const isAdmin = owner.toLowerCase() === activeAccount.toLowerCase();
-      setRoles({
-        admin: isAdmin,
-        doctor: !!doctor,
-        insurer: !!insurer,
-        patient: !doctor && !insurer && !isAdmin
-      });
-      setChainId(Number(network.chainId));
-
-      const doctorAccess = await Promise.all(
-        doctorDirectory.map(async (doctorAddress) => ({
-          address: doctorAddress,
-          granted: await activeContract.hasRecordAccess(activeAccount, doctorAddress).catch(() => false)
-        }))
-      );
-      setAuthorizedDoctors(doctorAccess.filter((entry) => entry.granted).map((entry) => entry.address));
-
-      // Fetch patient records with metadata
-      const loadedRecords = await Promise.all(
-        ownRecordIds.map(async (id) => {
-          const rec = await activeContract.getRecord(id);
-          let meta = { recordType: 0, title: "Medical Record", description: "" };
-          try {
-            meta = await activeContract.getRecordMeta(id);
-          } catch {
-            // fallback for legacy records
-          }
-          return {
-            id: Number(rec.id),
-            patient: rec.patient,
-            author: rec.author,
-            encryptedUri: rec.encryptedUri,
-            digest: rec.digest,
-            createdAt: Number(rec.createdAt),
-            recordType: Number(meta.recordType || 0),
-            title: meta.title || "Medical Record",
-            description: meta.description || ""
-          };
-        })
-      );
-      setRecords(loadedRecords);
-
-      // Fetch appointments
-      const appointmentRows = await Promise.all(
-        Array.from({ length: Number(nextAppointment) - 1 }, async (_, index) => {
-          try {
-            const appointment = await activeContract.getAppointment(index + 1);
-            return { ...appointment, id: index + 1 };
-          } catch {
-            return null;
-          }
-        })
-      );
-      setAppointments(appointmentRows.filter(Boolean));
-
-      // Fetch claims
-      const claimRows = await Promise.all(
-        Array.from({ length: Number(nextClaim) - 1 }, async (_, index) => {
-          try {
-            const claim = await activeContract.getClaim(index + 1);
-            return { ...claim, id: index + 1 };
-          } catch {
-            return null;
-          }
-        })
-      );
-      setClaims(claimRows.filter(Boolean));
-
-      // Fetch access requests
-      const requestRows = await Promise.all(
-        Array.from({ length: Number(nextReq) - 1 }, async (_, index) => {
-          try {
-            const req = await activeContract.getAccessRequest(index + 1);
-            return {
-              id: Number(req.id),
-              doctor: req.doctor,
-              patient: req.patient,
-              reason: req.reason,
-              status: Number(req.status),
-              requestedAt: Number(req.requestedAt)
-            };
-          } catch {
-            return null;
-          }
-        })
-      );
-      setAccessRequests(requestRows.filter(Boolean));
-
-      setClaimPool(formatEther(pool));
-    } catch (error) {
-      notify("error", readableError(error));
-    } finally {
-      setLoading(false);
-    }
-  }, [notify]);
-
-  const connectWallet = useCallback(async () => {
-    if (!window.ethereum) {
-      notify("error", "Install MetaMask to connect a real Web3 wallet.");
-      return;
-    }
-    try {
-      const provider = new BrowserProvider(window.ethereum);
-      await provider.send("eth_requestAccounts", []);
-      const signer = await provider.getSigner();
-      const address = await signer.getAddress();
-      const activeContract = makeContract(signer);
-      setAccount(address);
-      setContract(activeContract);
-      setSandboxMode(false);
-      if (!activeContract) {
-        notify("error", "Set VITE_CONTRACT_ADDRESS to a deployed platform address.");
-        return;
-      }
-      await refresh(activeContract, address);
-      notify("success", "MetaMask wallet connected successfully.");
-    } catch (error) {
-      notify("error", readableError(error));
-    }
-  }, [notify, refresh]);
 
   const handleLogin = async (email, password, selectedRole) => {
     setLoginError("");
@@ -463,71 +120,44 @@ function App() {
       apiSessionToken = token;
       await loadDatabaseDashboard(user);
       setLoginUser(user);
-      setAccount(user.wallet || DEMO_ACCOUNTS[selectedRole]?.address || "");
-      setSandboxMode(true);
+      const isAdm = user.role === "administrator";
+      const isDoc = user.role === "doctor";
+      const isPat = user.role === "patient";
       setRoles({
-        admin: user.role === "administrator",
-        doctor: user.role === "doctor",
-        insurer: false,
-        patient: user.role === "patient"
+        admin: isAdm,
+        doctor: isDoc,
+        patient: isPat
       });
-      setChainId(31337);
+      setActiveView(isAdm ? "admin" : "overview");
     } catch (error) {
       apiSessionToken = "";
       setLoginError(error.message || "Invalid email, password or role selection.");
     }
   };
 
-  const disconnectWallet = () => {
+  const handleSignOut = () => {
     apiSessionToken = "";
-    setAccount("");
-    setChainId(null);
-    setContract(null);
     setLoginUser(null);
     setLoginError("");
-    setSandboxMode(true);
-    notify("success", "Wallet disconnected.");
+    setActiveView("overview");
+    notify("success", "Signed out successfully.");
   };
 
   useEffect(() => {
-    if (sandboxMode && !loginUser) {
-      initSandboxData();
-      setAccount(DEMO_ACCOUNTS.patient.address);
-      setRoles({
-        admin: false,
-        doctor: false,
-        insurer: false,
-        patient: true
-      });
-      setChainId(31337);
-    }
-
     if (loginUser) {
-      setAccount(loginUser.wallet);
       setRoles({
         admin: loginUser.role === "administrator",
         doctor: loginUser.role === "doctor",
-        insurer: false,
         patient: loginUser.role === "patient"
       });
-      setChainId(31337);
     }
-  }, [sandboxMode, initSandboxData, loginUser]);
+  }, [loginUser]);
 
-  // Universal transaction handler: executes on-chain or updates sandbox state
-  const runTransaction = async (action, successMessage, sandboxFallback) => {
+  // Database action handler
+  const runTransaction = async (_unusedAction, successMessage, databaseAction) => {
     setPending(true);
     try {
-      if (!sandboxMode && contract) {
-        const transaction = await action();
-        await transaction.wait();
-        await refresh(contract, account);
-      } else {
-        await new Promise((r) => setTimeout(r, 120));
-        if (sandboxFallback) {
-          await sandboxFallback();
-        }
-      }
+      await databaseAction();
       notify("success", successMessage);
       return true;
     } catch (error) {
@@ -542,20 +172,31 @@ function App() {
     ? "Administrator"
     : roles.doctor
     ? "Clinician"
-    : roles.insurer
-    ? "Insurer"
     : "Patient";
 
   const displayNavigation = useMemo(() => {
-    const roleNavigation = roles.doctor
-      ? navigation.filter((item) => item.id !== "claims")
-      : navigation;
-    return [...roleNavigation, ...(roles.admin ? [{ id: "admin", label: "Administration", icon: Users }] : [])];
-  }, [roles.admin, roles.doctor]);
+    if (roles.admin) {
+      return [
+        { id: "overview", label: "Overview", icon: LayoutDashboard },
+        { id: "admin", label: "Administration", icon: Users },
+        { id: "access", label: "Access Control", icon: ShieldCheck },
+        { id: "records", label: "Medical records", icon: FileLock2 },
+        { id: "appointments", label: "Appointments", icon: CalendarDays }
+      ];
+    }
+    return navigation;
+  }, [roles.admin]);
 
   const upcomingAppointments = appointments.filter((item) => Number(item.status) < 2);
-  const pendingClaims = claims.filter((item) => Number(item.status) === 0);
-  const pendingRequests = accessRequests.filter((r) => Number(r.status) === 0);
+
+  // CRITICAL FIX: Only patients have actionable inbound consent requests waiting for their approval!
+  // Neither Doctors nor Administrators see an improper "1" badge in their sidebar.
+  const patientPendingRequests = useMemo(() => {
+    if (!roles.patient || !loginUser) return [];
+    return accessRequests.filter(
+      (r) => Number(r.patientId) === Number(loginUser.id) && Number(r.status) === 0
+    );
+  }, [roles.patient, loginUser, accessRequests]);
 
   const selectView = (view) => {
     setActiveView(view);
@@ -569,7 +210,7 @@ function App() {
   return (
     <div className="app-shell">
       <aside className={`sidebar ${mobileNavOpen ? "sidebar-open" : ""}`}>
-        <a className="brand" href="#overview" onClick={() => selectView("overview")}>
+        <a className="brand" href="#overview" onClick={(e) => { e.preventDefault(); selectView("overview"); }}>
           <span className="brand-mark"><HeartPulse size={21} strokeWidth={2.2} /></span>
           <span className="brand-name">medledger<span>.</span><small>CARE, WITH CONSENT</small></span>
           <button
@@ -591,8 +232,10 @@ function App() {
             >
               <Icon size={18} strokeWidth={1.8} />
               <span>{label}</span>
-              {id === "claims" && pendingClaims.length > 0 && <span className="nav-count">{pendingClaims.length}</span>}
-              {id === "access" && pendingRequests.length > 0 && <span className="nav-count">{pendingRequests.length}</span>}
+              {/* Sidebar count only displays for patients who have actionable pending requests */}
+              {id === "access" && roles.patient && patientPendingRequests.length > 0 && (
+                <span className="nav-count">{patientPendingRequests.length}</span>
+              )}
             </button>
           ))}
         </nav>
@@ -602,15 +245,8 @@ function App() {
             <LockKeyhole size={16} />
             <div>
               <strong>Patient-First Access</strong>
-              <span>Consent Enforced On-Chain</span>
+              <span>Consent managed by patients</span>
             </div>
-          </div>
-          <div className="network-line">
-            <span className={`network-dot ${!sandboxMode && account ? "connected" : ""}`} />
-            {sandboxMode || !account ? "Wallet not connected" : `Chain ID ${chainId}`}
-          </div>
-          <div className="sidebar-foot">
-            MEDLEDGER PROTOCOL <span>v1.0 (Ethers v6)</span>
           </div>
         </div>
       </aside>
@@ -632,38 +268,24 @@ function App() {
             <strong>{displayNavigation.find((item) => item.id === activeView)?.label || "Overview"}</strong>
           </div>
           <div className="topbar-actions">
-            {account && (
-              <span className="role-pill">
-                <span className="role-indicator" />
-                {sandboxMode ? `${roleName}: ${loginUser?.name || DEMO_ACCOUNTS.patient.name}` : `${roleName}: ${shortAddress(account)}`}
-              </span>
-            )}
-            <button
-              className={`wallet-button ${account && !sandboxMode ? "wallet-connected" : ""}`}
-              onClick={account && !sandboxMode ? disconnectWallet : connectWallet}
-              title={sandboxMode ? "Connect MetaMask wallet" : "Disconnect wallet from this session"}
-            >
-              <Wallet size={16} />
-              {sandboxMode ? "Connect wallet" : shortAddress(account)}
-              {!sandboxMode && <LogOut size={14} />}
-            </button>
+            <span className="role-pill">
+              <span className="role-indicator" />
+              {`${roleName}: ${loginUser.name}`}
+            </span>
+            <button className="text-action" onClick={handleSignOut}>Sign out <LogOut size={14} /></button>
           </div>
         </header>
 
         <div className="page-content">
           <div className="page-heading">
             <div>
-              <div className="eyebrow">WEB 3.0 HEALTHCARE ECOSYSTEM</div>
-              <h1>{headingFor(activeView)}</h1>
-              <p>{subtitleFor(activeView)}</p>
+              <div className="eyebrow">HEALTHCARE PORTAL</div>
+              <h1>{headingFor(activeView, roles)}</h1>
+              <p>{subtitleFor(activeView, roles)}</p>
             </div>
             <button
               className="refresh-button"
-              onClick={() => (!sandboxMode && contract
-                ? refresh(contract, account)
-                : loginUser
-                ? loadDatabaseDashboard(loginUser).catch((error) => notify("error", error.message))
-                : initSandboxData())}
+              onClick={() => loadDatabaseDashboard(loginUser).catch((error) => notify("error", error.message))}
               disabled={loading}
               aria-label="Refresh data"
               title="Refresh data"
@@ -673,35 +295,21 @@ function App() {
             </button>
           </div>
 
-          {!contract && !sandboxMode && (
-            <div className="setup-banner">
-              <div className="setup-icon"><CircleAlert size={18} /></div>
-              <div>
-                <strong>Connect to your care network</strong>
-                <span>Configure a deployed contract address, then connect MetaMask to its network.</span>
-              </div>
-              <button onClick={connectWallet} className="text-action">
-                Connect wallet <ArrowUpRight size={15} />
-              </button>
-            </div>
-          )}
-
           {activeView === "overview" && (
             <Overview
-              account={account}
+              userId={loginUser?.id}
               roles={roles}
               records={records}
               appointments={upcomingAppointments}
-              claims={pendingClaims}
+              authorizedDoctors={authorizedDoctors}
+              accessRequests={accessRequests}
               selectView={selectView}
             />
           )}
 
           {activeView === "records" && (
             <RecordsView
-              account={account}
               userId={loginUser?.id}
-              sandboxMode={sandboxMode}
               records={records}
               roles={roles}
               pending={pending}
@@ -713,11 +321,8 @@ function App() {
 
           {activeView === "access" && (
             <AccessView
-              account={account}
               userId={loginUser?.id}
               roles={roles}
-              contract={contract}
-              sandboxMode={sandboxMode}
               pending={pending}
               runTransaction={runTransaction}
               notify={notify}
@@ -725,17 +330,20 @@ function App() {
               setAccessRequests={setAccessRequests}
               authorizedDoctors={authorizedDoctors}
               setAuthorizedDoctors={setAuthorizedDoctors}
+              accessLogs={accessLogs}
+              doctors={doctorDirectory}
+              patients={patientDirectory}
               records={records}
             />
           )}
 
           {activeView === "appointments" && (
             <AppointmentsView
-              account={account}
               userId={loginUser?.id}
+              userName={loginUser?.name}
               doctors={doctorDirectory}
+              patients={patientDirectory}
               roles={roles}
-              sandboxMode={sandboxMode}
               appointments={appointments}
               pending={pending}
               runTransaction={runTransaction}
@@ -743,38 +351,19 @@ function App() {
             />
           )}
 
-          {activeView === "claims" && (
-            <ClaimsView
-              account={account}
-              userId={loginUser?.id}
-              sandboxMode={sandboxMode}
-              roles={roles}
-              claims={claims}
-              claimPool={claimPool}
-              pending={pending}
-              runTransaction={runTransaction}
-              setClaims={setClaims}
-              setClaimPool={setClaimPool}
-            />
-          )}
-
           {activeView === "admin" && roles.admin && (
             <AdminView
               users={adminUsers}
-              sandboxMode={sandboxMode}
-              pending={pending}
-              runTransaction={runTransaction}
-              claimPool={claimPool}
+              accessRequests={accessRequests}
+              records={records}
+              appointments={appointments}
             />
           )}
 
           {activeView === "admin" && !roles.admin && <AccessDenied />}
 
           <footer className="page-footer">
-            <span>Modern Web 3.0 Healthcare Platform • Encrypted IPFS Off-chain Storage with Ethereum Smart Contracts</span>
-            <a href="https://ethereum.org/en/developers/docs/" target="_blank" rel="noreferrer">
-              Ethereum Specs <ArrowUpRight size={13} />
-            </a>
+            <span>MedLedger Decentralized Healthcare Portal</span>
           </footer>
         </div>
       </main>
@@ -784,7 +373,7 @@ function App() {
         <div className="modal-overlay" onClick={() => setActiveModalRecord(null)}>
           <div className="modal-card" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h3>Cryptographic Record Verification</h3>
+              <h3>Medical Record Details</h3>
               <button
                 className="icon-button"
                 onClick={() => setActiveModalRecord(null)}
@@ -794,39 +383,30 @@ function App() {
               </button>
             </div>
             <div className="modal-body">
-              <div>
+              <div style={{ marginBottom: "12px" }}>
                 <span className={`category-badge ${RECORD_TYPES[activeModalRecord.recordType]?.class || "cat-history"}`}>
                   {activeModalRecord.category || RECORD_TYPES[activeModalRecord.recordType]?.label || "Medical Record"}
                 </span>
                 <h4 style={{ margin: "8px 0 4px", fontSize: "16px", color: "#1d382f" }}>
                   {activeModalRecord.title}
                 </h4>
-                <p style={{ margin: 0, fontSize: "12px", color: "#546e63" }}>
+                <p style={{ margin: 0, fontSize: "13px", color: "#546e63" }}>
                   {activeModalRecord.description || "No clinical narrative attached."}
                 </p>
               </div>
 
               <div style={{ display: "grid", gap: "8px", background: "#f8fbf9", padding: "12px", borderRadius: "6px" }}>
                 <div style={{ fontSize: "11px", color: "#50695f" }}>
-                  <strong>Patient Address:</strong> {activeModalRecord.patient}
+                  <strong>Added:</strong> {new Date(Number(activeModalRecord.createdAt) * 1000).toLocaleString()}
                 </div>
-                <div style={{ fontSize: "11px", color: "#50695f" }}>
-                  <strong>Author Address:</strong> {activeModalRecord.author}
-                </div>
-                <div style={{ fontSize: "11px", color: "#50695f" }}>
-                  <strong>Off-Chain URI:</strong> {activeModalRecord.encryptedUri}
-                </div>
-                <div style={{ fontSize: "11px", color: "#50695f" }}>
-                  <strong>Created At:</strong> {new Date(Number(activeModalRecord.createdAt) * 1000).toLocaleString()}
-                </div>
+                {activeModalRecord.digest && (
+                  <div style={{ fontSize: "11px", color: "#50695f", wordBreak: "break-all" }}>
+                    <strong>Integrity Digest:</strong> <code>{activeModalRecord.digest}</code>
+                  </div>
+                )}
               </div>
 
-              <div className="hash-pill">
-                <ShieldCheck size={16} color="#2b7e64" />
-                <span>SHA-256 Digest: {activeModalRecord.digest}</span>
-              </div>
-
-              <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px" }}>
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px", marginTop: "16px" }}>
                 <button className="primary-button" onClick={() => setActiveModalRecord(null)}>
                   Close
                 </button>
@@ -849,17 +429,52 @@ function App() {
       {pending && (
         <div className="transaction-bar">
           <span className="transaction-spinner" />
-          Broadcasting transaction to blockchain ledger...
+          Saving your changes...
         </div>
       )}
     </div>
   );
 }
 
+// Preset verified credentials for seamless role switching and zero-error admin login
+const DEMO_ACCOUNTS = {
+  patient: {
+    role: "patient",
+    email: "emma.patient@medledger.local",
+    password: "patient123",
+    label: "Patient",
+    name: "Emma Johnson"
+  },
+  doctor: {
+    role: "doctor",
+    email: "hannah.doctor@medledger.local",
+    password: "doctor123",
+    label: "Doctor",
+    name: "Dr. Hannah Lee"
+  },
+  administrator: {
+    role: "administrator",
+    email: "admin@medledger.local",
+    password: "admin123",
+    label: "Admin",
+    name: "System Admin"
+  }
+};
+
 function LoginScreen({ onLogin, error }) {
-  const [email, setEmail] = useState("emma.patient@medledger.local");
-  const [password, setPassword] = useState("patient123");
   const [selectedRole, setSelectedRole] = useState("patient");
+  const [email, setEmail] = useState(DEMO_ACCOUNTS.patient.email);
+  const [password, setPassword] = useState(DEMO_ACCOUNTS.patient.password);
+
+  // When clicking role tab, immediately update role and pre-fill credentials
+  const selectRoleTab = (roleKey) => {
+    setSelectedRole(roleKey);
+    const demo = DEMO_ACCOUNTS[roleKey];
+    if (demo) {
+      setEmail(demo.email);
+      setPassword(demo.password);
+    }
+  };
 
   const handleSubmit = (event) => {
     event.preventDefault();
@@ -898,10 +513,11 @@ function LoginScreen({ onLogin, error }) {
           </div>
           <h2 style={{ margin: 0, color: "#1d3d32", fontSize: "28px" }}>MedLedger</h2>
           <p style={{ margin: "8px 0 0", color: "#5d7d72", fontSize: "13px" }}>
-            Secure healthcare access portal
+            Secure Healthcare Access & Consent Portal
           </p>
         </div>
 
+        {/* Role Selector Tabs */}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: "10px", marginBottom: "18px" }}>
           {[
             { label: "Patient", value: "patient" },
@@ -911,15 +527,16 @@ function LoginScreen({ onLogin, error }) {
             <button
               key={roleOption.value}
               type="button"
-              onClick={() => setSelectedRole(roleOption.value)}
+              onClick={() => selectRoleTab(roleOption.value)}
               style={{
-                border: selectedRole === roleOption.value ? "1px solid #2d7d63" : "1px solid #dfe9e4",
+                border: selectedRole === roleOption.value ? "2px solid #2d7d63" : "1px solid #dfe9e4",
                 background: selectedRole === roleOption.value ? "#eaf9f1" : "#f8faf9",
-                color: "#1d3d32",
+                color: selectedRole === roleOption.value ? "#1d5744" : "#4a6358",
                 borderRadius: "10px",
                 padding: "10px 8px",
-                fontWeight: 600,
-                cursor: "pointer"
+                fontWeight: selectedRole === roleOption.value ? 700 : 600,
+                cursor: "pointer",
+                transition: "all 0.15s ease"
               }}
             >
               {roleOption.label}
@@ -932,6 +549,7 @@ function LoginScreen({ onLogin, error }) {
             Email
             <input
               type="email"
+              required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               style={{
@@ -949,6 +567,7 @@ function LoginScreen({ onLogin, error }) {
             Password
             <input
               type="password"
+              required
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               style={{
@@ -969,9 +588,13 @@ function LoginScreen({ onLogin, error }) {
               border: "1px solid #f4d5db",
               borderRadius: "10px",
               padding: "10px 12px",
-              fontSize: "12px"
+              fontSize: "12px",
+              display: "flex",
+              alignItems: "center",
+              gap: "6px"
             }}>
-              {error}
+              <CircleAlert size={16} />
+              <span>{error}</span>
             </div>
           )}
 
@@ -984,40 +607,72 @@ function LoginScreen({ onLogin, error }) {
               background: "linear-gradient(135deg, #2a7f63 0%, #1d694d 100%)",
               color: "#fff",
               fontWeight: 700,
-              cursor: "pointer"
+              cursor: "pointer",
+              fontSize: "14px"
             }}
           >
-            Sign in
+            Sign in as {selectedRole === "administrator" ? "Administrator" : selectedRole === "doctor" ? "Doctor" : "Patient"}
           </button>
         </form>
+
+        {/* Quick Demo Fill Buttons */}
+        <div style={{ marginTop: "20px", paddingTop: "16px", borderTop: "1px solid #eef3f0", textAlign: "center" }}>
+          <div style={{ fontSize: "11px", color: "#6a867b", marginBottom: "8px", fontWeight: 600 }}>
+            QUICK LOGIN DEMO ACCOUNTS
+          </div>
+          <div style={{ display: "flex", gap: "6px", justifyContent: "center", flexWrap: "wrap" }}>
+            {Object.entries(DEMO_ACCOUNTS).map(([key, acc]) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => {
+                  selectRoleTab(key);
+                  onLogin(acc.email, acc.password, acc.role);
+                }}
+                style={{
+                  padding: "5px 10px",
+                  fontSize: "11px",
+                  borderRadius: "6px",
+                  border: "1px solid #d4e2db",
+                  background: "#f3f8f5",
+                  color: "#215344",
+                  cursor: "pointer",
+                  fontWeight: 600
+                }}
+              >
+                {acc.name} ({acc.label})
+              </button>
+            ))}
+          </div>
+        </div>
 
       </div>
     </div>
   );
 }
 
-function headingFor(view) {
+function headingFor(view, roles) {
+  if (view === "access" && roles?.admin) return "System Consent & Access Governance";
   return (
     {
-      overview: "Healthcare, Decoupled & Decentralized",
-      records: "Medical Records Ledger",
+      overview: "Your Care Overview",
+      records: "Medical Records",
       access: "Patient Access & Consent Management",
-      appointments: "Consultation Bookings & Escrow",
-      claims: "Automated Insurance Claims",
-      admin: "Network Governance & Role Registry"
+      appointments: "Appointments",
+      admin: "Network Administration"
     }[view] || "Overview"
   );
 }
 
-function subtitleFor(view) {
+function subtitleFor(view, roles) {
+  if (view === "access" && roles?.admin) return "Audit clinician access permissions and patient consent logs across the hospital network.";
   return (
     {
-      overview: "Patient-controlled health records, crypto escrow payments, and verifiable medical data sharing.",
-      records: "Encrypted record pointers anchored with cryptographic SHA-256 checksums.",
-      access: "Clinicians request access, and patients grant or revoke permission on-chain.",
-      appointments: "Book doctor visits with cryptocurrency payments held safely in smart contract escrow.",
-      claims: "Submit and settle verified insurance claims directly from the smart contract liquidity pool.",
-      admin: "Authorize clinicians, verify health insurers, and manage contract liquidity pools."
+      overview: "Review health records, manage care permissions, and keep appointments organized.",
+      records: "View and manage your medical records and clinical summaries.",
+      access: "Patients control which clinicians can view their shared records.",
+      appointments: "Schedule visits with clinicians and manage upcoming appointments.",
+      admin: "Review registered accounts, role assignments, and governance logs."
     }[view] || "Manage your healthcare data securely."
   );
 }
@@ -1026,17 +681,24 @@ function subtitleFor(view) {
 // VIEW 1: Overview
 // -------------------------------------------------------------
 function Overview({
-  account,
+  userId,
   roles,
   records,
   appointments,
-  claims,
+  authorizedDoctors,
+  accessRequests,
   selectView
 }) {
   const stats = [
     { label: "RECORD REFERENCES", value: records.length, icon: FileLock2, tone: "mint", link: "records" },
     { label: "SCHEDULED VISITS", value: appointments.length, icon: CalendarDays, tone: "blue", link: "appointments" },
-    { label: "CLAIMS IN REVIEW", value: claims.length, icon: ClipboardList, tone: "amber", link: "claims" }
+    {
+      label: roles.admin ? "ACCESS REQUESTS" : "AUTHORIZED CLINICIANS",
+      value: roles.admin ? accessRequests.length : authorizedDoctors.length,
+      icon: ShieldCheck,
+      tone: "amber",
+      link: "access"
+    }
   ];
 
   return (
@@ -1044,12 +706,11 @@ function Overview({
       <section className="welcome-band">
         <div className="welcome-copy">
           <span className="welcome-kicker">
-            <span /> CONSENT-DRIVEN WEB 3.0 HEALTHCARE
+            <span /> PATIENT-CENTERED CARE
           </span>
-          <h2>Your Health, Your Keys, Your Data</h2>
+          <h2>Your health, in one place</h2>
           <p>
-            Experience true patient sovereignty. Sensitive medical information remains off-chain in encrypted IPFS
-            storage while smart contracts enforce role-based access, escrow doctor fees, and disburse insurance claims.
+            Keep your health records, clinician permissions, and appointments organized in one secure portal.
           </p>
         </div>
         <div className="welcome-art" aria-hidden="true">
@@ -1070,16 +731,16 @@ function Overview({
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "10px", fontSize: "11px", color: "#476458" }}>
           <div style={{ background: "white", padding: "10px 12px", borderRadius: "6px", border: "1px solid #e1ebe5" }}>
-            <strong>1. Upload Report:</strong> Patient adds encrypted report + SHA-256 hash in Records.
+            <strong>1. Add a record:</strong> Patient enters medical details in Medical Records.
           </div>
           <div style={{ background: "white", padding: "10px 12px", borderRadius: "6px", border: "1px solid #e1ebe5" }}>
-            <strong>2. Doctor Requests:</strong> Clinician requests access with clinical reason in Access Control.
+            <strong>2. Doctor Requests:</strong> Clinician requests record access with clinical reason in Access Control.
           </div>
           <div style={{ background: "white", padding: "10px 12px", borderRadius: "6px", border: "1px solid #e1ebe5" }}>
-            <strong>3. Patient Approves:</strong> Patient reviews queue and grants access to doctor on-chain.
+            <strong>3. Patient approves:</strong> Patient reviews request in inbound queue and grants consent.
           </div>
           <div style={{ background: "white", padding: "10px 12px", borderRadius: "6px", border: "1px solid #e1ebe5" }}>
-            <strong>4. Escrow & Settle:</strong> Book visit with crypto escrow, and settle insurance claims.
+            <strong>4. Continue care:</strong> Clinician reviews authorized records and completes appointments.
           </div>
         </div>
       </section>
@@ -1099,7 +760,7 @@ function Overview({
         <section className="panel activity-panel">
           <div className="panel-heading">
             <div>
-              <span className="section-kicker">ON-CHAIN TIMELINE</span>
+              <span className="section-kicker">CARE TIMELINE</span>
               <h2>Active care events</h2>
             </div>
             <button className="subtle-action" onClick={() => selectView("appointments")}>
@@ -1109,14 +770,14 @@ function Overview({
           {appointments.length ? (
             <div className="activity-list">
               {appointments.slice(0, 4).map((item) => (
-                <AppointmentRow key={item.id} item={item} account={account} compact />
+                <AppointmentRow key={item.id} item={item} userId={userId} compact />
               ))}
             </div>
           ) : (
             <EmptyState
               icon={Activity}
               title="No pending appointments"
-              message="Scheduled visits and smart contract consultations will appear here."
+              message="Scheduled visits will appear here."
             />
           )}
         </section>
@@ -1133,8 +794,8 @@ function Overview({
             <button onClick={() => selectView("records")}>
               <span className="quick-icon quick-mint"><FilePlus2 size={17} /></span>
               <span>
-                <strong>Medical records ledger</strong>
-                <small>Upload encrypted references & checksums</small>
+                <strong>Medical records</strong>
+                <small>Review reports and clinical summaries</small>
               </span>
               <ArrowUpRight size={15} />
             </button>
@@ -1150,7 +811,7 @@ function Overview({
               <span className="quick-icon quick-amber"><CalendarDays size={17} /></span>
               <span>
                 <strong>Book consultation</strong>
-                <small>Schedule with smart contract escrow</small>
+                <small>Schedule with a registered clinician</small>
               </span>
               <ArrowUpRight size={15} />
             </button>
@@ -1161,11 +822,11 @@ function Overview({
       {roles.admin && (
         <div className="admin-notice">
           <ShieldCheck size={16} />
-          <span>This wallet administers the network. Use</span>
+          <span>Manage registered accounts in</span>
           <button onClick={() => selectView("admin")}>
-            Network administration <ArrowUpRight size={13} />
+            Network Administration <ArrowUpRight size={13} />
           </button>
-          <span>to approve clinicians and insurers.</span>
+          <span>.</span>
         </div>
       )}
     </>
@@ -1176,9 +837,7 @@ function Overview({
 // VIEW 2: Medical Records
 // -------------------------------------------------------------
 function RecordsView({
-  account,
   userId,
-  sandboxMode,
   records,
   roles,
   pending,
@@ -1196,59 +855,28 @@ function RecordsView({
 
   const isPatient = roles.patient;
 
-  // Real in-browser cryptographic hashing when a file or notes are provided
   const handleFileChange = async (event) => {
     const file = event.target.files?.[0];
     if (!file) return;
     setSelectedFile(file);
     if (!title) setTitle(file.name.replace(/\.[^/.]+$/, ""));
 
-    // Read bytes and calculate SHA-256
     const arrayBuffer = await file.arrayBuffer();
     const hash = await computeSha256(new Uint8Array(arrayBuffer));
     setDigest(hash);
-
-    // Generate mock IPFS CID pointer
-    const mockCid = `ipfs://bafybei${hash.slice(2, 28)}medical${Date.now()}`;
-    setUri(mockCid);
-  };
-
-  const handleComputeManualHash = async () => {
-    if (!description && !title) return;
-    const textData = `${title}\n${description}`;
-    const hash = await computeSha256(textData);
-    setDigest(hash);
-    setUri(`ipfs://bafybeihash${hash.slice(2, 26)}med`);
+    setUri(`record-reference:${hash.slice(2)}`);
   };
 
   const submit = async (event) => {
     event.preventDefault();
-    if (!isAddress(account)) return;
-    if (!/^0x[\da-fA-F]{64}$/.test(digest)) return;
-
-    const newRecordId = records.length + 1;
+    if (!userId) return;
+    const recordDigest = digest || await computeSha256(`${title}\n${description}`);
+    const recordUri = uri || `record-reference:${Date.now()}`;
     const createdTimestamp = Math.floor(Date.now() / 1000);
 
     const success = await runTransaction(
-      () => {
-        if (contractAddress && window.ethereum) {
-          return (async () => {
-            const provider = new BrowserProvider(window.ethereum);
-            const signer = await provider.getSigner();
-            const activeContract = makeContract(signer);
-            return activeContract.addRecordWithDetails(
-              account,
-              uri.trim(),
-              digest.trim(),
-              Number(recordType),
-              title.trim(),
-              description.trim()
-            );
-          })();
-        }
-        return Promise.reject(new Error("Contract unavailable"));
-      },
-      sandboxMode ? "Medical record saved to the patient database." : "Encrypted medical record added to ledger.",
+      async () => {},
+      "Medical record saved to the patient database.",
       async () => {
         const result = await apiRequest("/api/records", {
           method: "POST",
@@ -1257,16 +885,16 @@ function RecordsView({
             title: title.trim(),
             category: RECORD_TYPES[Number(recordType)].label,
             description: description.trim(),
-            encryptedUri: uri.trim(),
-            digest: digest.trim()
+            encryptedUri: recordUri,
+            digest: recordDigest
           })
         });
         const newRecord = {
           id: result.id,
-          patient: account,
-          author: account,
-          encryptedUri: uri.trim(),
-          digest: digest.trim(),
+          patientId: Number(userId),
+          authorId: Number(userId),
+          encryptedUri: recordUri,
+          digest: recordDigest,
           recordType: Number(recordType),
           title: title.trim(),
           description: description.trim(),
@@ -1290,6 +918,7 @@ function RecordsView({
     const typeObj = RECORD_TYPES[Number(r.recordType)] || RECORD_TYPES[0];
     return (r.category || typeObj.label) === activeFilter;
   });
+
   const recordCategories = [...new Set(records.map((record) => (
     record.category || RECORD_TYPES[Number(record.recordType)]?.label || "Medical History"
   )))];
@@ -1299,12 +928,8 @@ function RecordsView({
       <div className="privacy-callout">
         <LockKeyhole size={17} />
         <div>
-          <strong>{sandboxMode ? "Database demo record storage" : "Keep clinical data off-chain (Zero Knowledge & IPFS)"}</strong>
-          <span>
-            {sandboxMode
-              ? "Record metadata and demo file references are saved to MySQL. The browser computes a SHA-256 checksum, but files are not uploaded or encrypted by this demo."
-              : "Only encrypted storage references and SHA-256 checksums are stored on the blockchain. The browser computes cryptographic hashes locally before broadcasting transactions."}
-          </span>
+          <strong>Record storage & privacy</strong>
+          <span>Record references are saved securely with cryptographic SHA-256 checksums to verify integrity.</span>
         </div>
       </div>
 
@@ -1330,10 +955,10 @@ function RecordsView({
       <section className="panel">
         <div className="panel-heading">
           <div>
-            <span className="section-kicker">PATIENT MEDICAL LEDGER</span>
+            <span className="section-kicker">PATIENT RECORDS</span>
             <h2>Record references <span className="heading-count">{filteredRecords.length}</span></h2>
           </div>
-          <span className="immutable-tag"><Link2 size={13} /> {sandboxMode ? "MYSQL RECORDS" : "IMMUTABLE LEDGER"}</span>
+          <span className="immutable-tag"><FileText size={13} /> DATABASE RECORDS</span>
         </div>
 
         {filteredRecords.length ? (
@@ -1342,8 +967,7 @@ function RecordsView({
               <thead>
                 <tr>
                   <th>TYPE & TITLE</th>
-                  <th>CHECKSUM (SHA-256)</th>
-                  <th>ADDED BY</th>
+                  <th>CLINICAL SUMMARY</th>
                   <th>DATE</th>
                   <th>ACTIONS</th>
                 </tr>
@@ -1362,8 +986,7 @@ function RecordsView({
                           </div>
                         </div>
                       </td>
-                      <td className="mono-cell">{shortAddress(record.digest)}</td>
-                      <td className="mono-cell">{shortAddress(record.author)}</td>
+                      <td>{record.description || "No summary provided."}</td>
                       <td>{new Date(Number(record.createdAt) * 1000).toLocaleDateString()}</td>
                       <td>
                         <button
@@ -1371,7 +994,7 @@ function RecordsView({
                           onClick={() => onInspectRecord(record)}
                           style={{ padding: "4px 8px" }}
                         >
-                          <Eye size={13} /> Verify
+                          <Eye size={13} /> View
                         </button>
                       </td>
                     </tr>
@@ -1384,7 +1007,7 @@ function RecordsView({
           <EmptyState
             icon={FileLock2}
             title="No records matching filter"
-            message={account ? "Encrypted record pointers added to this wallet will appear here." : "Connect wallet to view ledger."}
+            message="Medical records added to your account will appear here."
           />
         )}
       </section>
@@ -1394,8 +1017,8 @@ function RecordsView({
         <section className="panel form-panel">
           <div className="panel-heading">
             <div>
-              <span className="section-kicker">DECENTRALIZED STORAGE</span>
-              <h2>Add new encrypted health record</h2>
+              <span className="section-kicker">PATIENT RECORDS</span>
+              <h2>Add a medical record</h2>
             </div>
             <span className="form-step">INTEGRITY CHECKED</span>
           </div>
@@ -1421,98 +1044,43 @@ function RecordsView({
             </label>
 
             <label className="field">
-              Record Title
+              Title
               <input
                 required
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
-                placeholder="e.g. Annual Blood Panel Report"
+                placeholder="e.g. Annual Wellness Blood Panel"
               />
             </label>
 
-            <label className="field field-wide">
-              Clinical Summary / Notes (Encrypted Off-chain)
+            <label className="field full-width">
+              Clinical Narrative / Notes
               <textarea
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
-                placeholder="Enter doctor notes, test results, or diagnostic details..."
+                placeholder="Summary, diagnosis, dosages, or key clinical observations..."
                 rows={3}
-                style={{
-                  padding: "8px 10px",
-                  borderRadius: "4px",
-                  border: "1px solid #dfe8e3",
-                  background: "#fbfdfc",
-                  fontFamily: "inherit",
-                  fontSize: "11px"
-                }}
               />
             </label>
 
-            {/* Drag & Drop File Selector */}
-            <div className="field field-wide">
-              <span>Select File to Compute SHA-256 Checksum</span>
-              <label className="dropzone-box">
-                <UploadCloud size={24} color="#357864" />
-                <div>
-                  <strong>{selectedFile ? selectedFile.name : "Click to select report or drop file here"}</strong>
-                  <span style={{ display: "block", fontSize: "10px", color: "#748f83", marginTop: "3px" }}>
-                    Supports PDF, DICOM, Lab PNG, or Text Documents
-                  </span>
-                </div>
-                <input type="file" style={{ display: "none" }} onChange={handleFileChange} />
-              </label>
-            </div>
-
-            <label className="field field-wide">
-              Encrypted IPFS URI
+            <label className="field full-width">
+              Supporting Medical Document (Optional)
               <input
-                required
-                value={uri}
-                onChange={(e) => setUri(e.target.value)}
-                placeholder="ipfs://bafybei..."
+                type="file"
+                onChange={handleFileChange}
+                style={{ padding: "6px" }}
               />
-              <small>Decentralized CID pointer to the off-chain encrypted medical asset.</small>
-            </label>
-
-            <label className="field field-wide">
-              SHA-256 Cryptographic Checksum
-              <div style={{ display: "flex", gap: "8px" }}>
-                <input
-                  required
-                  value={digest}
-                  onChange={(e) => setDigest(e.target.value)}
-                  placeholder="0x followed by 64 hexadecimal characters"
-                  pattern="^0x[\da-fA-F]{64}$"
-                  style={{ flex: 1 }}
-                />
-                <button
-                  type="button"
-                  className="secondary-button"
-                  onClick={handleComputeManualHash}
-                  title="Compute hash from title and notes"
-                >
-                  Generate Hash
-                </button>
-              </div>
-              <small>Verifies that off-chain files are never tampered with.</small>
+              <small>File bytes are used to generate a unique cryptographic SHA-256 fingerprint.</small>
             </label>
 
             <div className="form-footer">
-              <span>
-                <ShieldCheck size={14} /> Signed by patient wallet.
-              </span>
-              <button className="primary-button" disabled={!account || pending}>
-                <Plus size={16} /> {sandboxMode ? "Save record" : "Add to blockchain"}
+              <span>{digest ? `SHA-256: ${digest.slice(0, 18)}...` : "SHA-256 digest computed automatically."}</span>
+              <button className="primary-button" disabled={pending || !title}>
+                <Plus size={15} /> Save Record
               </button>
             </div>
           </form>
         </section>
-      )}
-
-      {roles.doctor && (
-        <p className="role-hint">
-          <Stethoscope size={15} /> To view a patient's records, request access in the Access Control tab.
-        </p>
       )}
     </div>
   );
@@ -1522,11 +1090,8 @@ function RecordsView({
 // VIEW 3: Access Control & Doctor-Patient Consent
 // -------------------------------------------------------------
 function AccessView({
-  account,
   userId,
   roles,
-  contract,
-  sandboxMode,
   pending,
   runTransaction,
   notify,
@@ -1534,51 +1099,41 @@ function AccessView({
   setAccessRequests,
   authorizedDoctors,
   setAuthorizedDoctors,
+  accessLogs,
+  doctors,
+  patients,
   records
 }) {
-  const [doctorAddress, setDoctorAddress] = useState("");
-  const [patientLookupAddress, setPatientLookupAddress] = useState("");
+  const [selectedDoctorId, setSelectedDoctorId] = useState("");
+  const [selectedPatientId, setSelectedPatientId] = useState("");
   const [requestReason, setRequestReason] = useState("");
   const [lookupRecords, setLookupRecords] = useState([]);
   const [lookupLoading, setLookupLoading] = useState(false);
 
   const isPatient = roles.patient;
+  const selectedPatient = patients.find((patient) => String(patient.id) === selectedPatientId);
 
   // Patient grants or revokes direct access
-  const handleSetAccess = async (doctorTarget, granted) => {
-    if (!isAddress(doctorTarget)) {
-      notify("error", "Enter a valid clinician wallet address.");
+  const handleSetAccess = async (doctorId, granted) => {
+    const clinician = doctors.find((doctor) => String(doctor.id) === String(doctorId));
+    if (!clinician) {
+      notify("error", "Select a clinician from the directory.");
       return;
     }
     await runTransaction(
-      () => {
-        if (contract) {
-          if (typeof contract.setRecordAccessWithPolicy === "function") {
-            return contract.setRecordAccessWithPolicy(
-              doctorTarget,
-              granted,
-              granted ? DEFAULT_ACCESS_POLICY_SECONDS : 0,
-              granted ? "Patient-approved medical review" : ""
-            );
-          }
-          return contract.setRecordAccess(doctorTarget, granted);
-        }
-        return Promise.reject(new Error("No contract"));
-      },
-      sandboxMode
-        ? granted ? "Clinician access saved for 30 days." : "Clinician access revoked."
-        : granted ? "Clinician access granted on-chain with a 30-day consent window." : "Clinician access revoked.",
+      async () => {},
+      granted ? "Clinician access saved for 30 days." : "Clinician access revoked.",
       async () => {
         await apiRequest("/api/access-grants", {
           method: "POST",
-          body: JSON.stringify({ userId, doctorWallet: doctorTarget, granted })
+          body: JSON.stringify({ userId, doctorId: clinician.id, granted })
         });
         if (granted) {
-          if (!authorizedDoctors.includes(doctorTarget)) {
-            setAuthorizedDoctors([...authorizedDoctors, doctorTarget]);
+          if (!authorizedDoctors.some((id) => Number(id) === Number(clinician.id))) {
+            setAuthorizedDoctors([...authorizedDoctors, clinician.id]);
           }
         } else {
-          setAuthorizedDoctors(authorizedDoctors.filter((a) => a.toLowerCase() !== doctorTarget.toLowerCase()));
+          setAuthorizedDoctors(authorizedDoctors.filter((id) => Number(id) !== Number(clinician.id)));
         }
       }
     );
@@ -1587,13 +1142,8 @@ function AccessView({
   // Patient responds to access request from doctor
   const handleRespondRequest = async (requestId, approve) => {
     await runTransaction(
-      () => {
-        if (contract) return contract.respondToAccessRequest(requestId, approve);
-        return Promise.reject(new Error("No contract"));
-      },
-      sandboxMode
-        ? approve ? "Access request approved in the patient database." : "Access request declined."
-        : approve ? "Access request approved. Clinician authorized." : "Access request declined.",
+      async () => {},
+      approve ? "Access request approved." : "Access request declined.",
       async () => {
         await apiRequest(`/api/access-requests/${requestId}`, {
           method: "PATCH",
@@ -1605,8 +1155,8 @@ function AccessView({
           )
         );
         const reqObj = accessRequests.find((r) => r.id === requestId);
-        if (approve && reqObj && !authorizedDoctors.includes(reqObj.doctor)) {
-          setAuthorizedDoctors([...authorizedDoctors, reqObj.doctor]);
+        if (approve && reqObj && !authorizedDoctors.some((id) => Number(id) === Number(reqObj.doctorId))) {
+          setAuthorizedDoctors([...authorizedDoctors, reqObj.doctorId]);
         }
       }
     );
@@ -1615,45 +1165,31 @@ function AccessView({
   // Doctor sends access request to patient
   const handleDoctorSendRequest = async (event) => {
     event.preventDefault();
-    if (!isAddress(patientLookupAddress)) {
-      notify("error", "Enter a valid patient address.");
+    if (!selectedPatient) {
+      notify("error", "Select a patient from the directory.");
       return;
     }
     await runTransaction(
-      () => {
-        if (contract) {
-          if (typeof contract.requestRecordAccessWithPolicy === "function") {
-            return contract.requestRecordAccessWithPolicy(
-              patientLookupAddress,
-              requestReason || "Medical review",
-              DEFAULT_ACCESS_POLICY_SECONDS
-            );
-          }
-          return contract.requestRecordAccess(patientLookupAddress, requestReason || "Medical review");
-        }
-        return Promise.reject(new Error("No contract"));
-      },
-      sandboxMode ? "Database access request sent to patient." : "Access request sent to patient. Consent window set to 30 days.",
+      async () => {},
+      "Access request sent to patient.",
       async () => {
         const result = await apiRequest("/api/access-requests", {
           method: "POST",
           body: JSON.stringify({
             userId,
-            patientWallet: patientLookupAddress,
+            patientId: selectedPatient.id,
             reason: requestReason || "Medical review"
           })
         });
         const newReq = {
           id: result.id,
-          doctor: account,
-          doctorName: DEMO_ACCOUNTS.doctor.name,
-          specialty: DEMO_ACCOUNTS.doctor.specialty,
-          patient: patientLookupAddress,
+          doctorId: Number(userId),
+          doctorName: doctors.find((doctor) => doctor.id === Number(userId))?.name || "Clinician",
+          specialty: doctors.find((doctor) => doctor.id === Number(userId))?.specialty || "",
+          patientId: selectedPatient.id,
           reason: requestReason || "Consultation and medical history review",
           status: 0,
-          requestedAt: Math.floor(Date.now() / 1000),
-          validForSeconds: DEFAULT_ACCESS_POLICY_SECONDS,
-          expiresAt: 0
+          requestedAt: Math.floor(Date.now() / 1000)
         };
         setAccessRequests([newReq, ...accessRequests]);
         setRequestReason("");
@@ -1664,33 +1200,21 @@ function AccessView({
   // Doctor looks up patient's records
   const handleLookup = async (event) => {
     event.preventDefault();
-    if (!isAddress(patientLookupAddress)) {
-      notify("error", "Enter a valid patient address.");
+    if (!selectedPatient) {
+      notify("error", "Select a patient from the directory.");
       return;
     }
     setLookupLoading(true);
     try {
-      if (!sandboxMode && contract) {
-        const ids = await contract.getPatientRecordIds(patientLookupAddress);
-        const loaded = await Promise.all(
-          ids.map(async (id) => {
-            const rec = await contract.getRecord(id);
-            const meta = await contract.getRecordMeta(id).catch(() => ({ recordType: 0, title: "Record" }));
-            return { ...rec, ...meta, id: Number(rec.id) };
-          })
-        );
-        setLookupRecords(loaded);
+      const patientRecords = records.filter(
+        (record) => Number(record.patientId) === Number(selectedPatient.id)
+      );
+      if (!patientRecords.length) {
+        notify("error", "No shared records are available. Request the patient's permission first.");
+        setLookupRecords([]);
       } else {
-        const patientRecords = records.filter(
-          (record) => record.patient?.toLowerCase() === patientLookupAddress.toLowerCase()
-        );
-        if (!patientRecords.length) {
-          notify("error", "The patient has not granted this wallet access yet. Submit an access request below.");
-          setLookupRecords([]);
-        } else {
-          setLookupRecords(patientRecords);
-          notify("success", "Loaded authorized patient records.");
-        }
+        setLookupRecords(patientRecords);
+        notify("success", "Loaded authorized patient records.");
       }
     } catch (error) {
       notify("error", readableError(error));
@@ -1699,19 +1223,18 @@ function AccessView({
     }
   };
 
-  const patientPendingRequests = accessRequests.filter((r) => Number(r.status) === 0);
+  // For patient: filter inbound pending requests
+  const patientPendingRequests = accessRequests.filter(
+    (r) => Number(r.patientId) === Number(userId) && Number(r.status) === 0
+  );
 
   return (
     <div className="content-stack">
       <div className="privacy-callout">
         <ShieldCheck size={17} />
         <div>
-          <strong>{sandboxMode ? "Consent stored in the patient database" : "Consent Enforced by Smart Contract"}</strong>
-          <span>
-            {sandboxMode
-              ? "Doctor record visibility follows active database consent. This demo does not submit consent changes to a blockchain."
-              : "Doctors cannot view patient records without explicit on-chain authorization. When a patient revokes access, smart contract view methods will revert with &apos;No patient authorization&apos;."}
-          </span>
+          <strong>Patient-controlled record access</strong>
+          <span>Clinicians can view shared records after a patient approves their request. Patients can revoke access at any time.</span>
         </div>
       </div>
 
@@ -1734,7 +1257,7 @@ function AccessView({
                     <div className="request-card-info">
                       <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
                         <Stethoscope size={15} color="#2b7762" />
-                        <strong>{req.doctorName || shortAddress(req.doctor)}</strong>
+                        <strong>{req.doctorName || "Clinician"}</strong>
                         {req.specialty && <span className="category-badge cat-consult">{req.specialty}</span>}
                       </div>
                       <span><strong>Reason:</strong> {req.reason || "Clinical evaluation"}</span>
@@ -1781,34 +1304,34 @@ function AccessView({
             </div>
             {authorizedDoctors.length ? (
               <div style={{ padding: "10px 18px" }}>
-                {authorizedDoctors.map((docAddr) => (
-                  <div
-                    key={docAddr}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                      padding: "10px 0",
-                      borderBottom: "1px solid #edf1ee"
-                    }}
-                  >
-                    <div>
-                      <strong style={{ fontSize: "11px", color: "#244439" }}>
-                        {docAddr.toLowerCase() === DEMO_ACCOUNTS.doctor.address.toLowerCase()
-                          ? DEMO_ACCOUNTS.doctor.name
-                          : shortAddress(docAddr)}
-                      </strong>
-                      <div style={{ fontSize: "10px", color: "#6a8378" }}>{docAddr}</div>
-                    </div>
-                    <button
-                      className="small-reject"
-                      disabled={pending}
-                      onClick={() => handleSetAccess(docAddr, false)}
+                {authorizedDoctors.map((doctorId) => {
+                  const doctor = doctors.find((item) => Number(item.id) === Number(doctorId));
+                  if (!doctor) return null;
+                  return (
+                    <div
+                      key={doctorId}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        padding: "10px 0",
+                        borderBottom: "1px solid #edf1ee"
+                      }}
                     >
-                      <X size={13} /> Revoke Access
-                    </button>
-                  </div>
-                ))}
+                      <div>
+                        <strong style={{ fontSize: "13px", color: "#244439" }}>{doctor.name}</strong>
+                        {doctor.specialty && <div style={{ fontSize: "11px", color: "#6a8378" }}>{doctor.specialty}</div>}
+                      </div>
+                      <button
+                        className="small-reject"
+                        disabled={pending}
+                        onClick={() => handleSetAccess(doctor.id, false)}
+                      >
+                        <X size={13} /> Revoke Access
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
             ) : (
               <EmptyState
@@ -1819,25 +1342,35 @@ function AccessView({
             )}
           </section>
 
-          {/* Manual Access Grant Form */}
+          {/* Patient permission form */}
           <section className="panel form-panel">
             <div className="panel-heading">
               <div>
-                <span className="section-kicker">MANUAL PERMISSION</span>
-                <h2>Authorize clinician by address</h2>
+                <span className="section-kicker">GRANT RECORD ACCESS</span>
+                <h2>Authorize a clinician</h2>
               </div>
             </div>
-            <form className="inline-form" onSubmit={(e) => { e.preventDefault(); handleSetAccess(doctorAddress, true); }}>
+            <form className="inline-form" onSubmit={(e) => { e.preventDefault(); handleSetAccess(selectedDoctorId, true); }}>
               <label className="field">
-                Clinician Wallet Address
-                <input
+                Clinician
+                <select
                   required
-                  value={doctorAddress}
-                  onChange={(e) => setDoctorAddress(e.target.value)}
-                  placeholder="0x…"
-                />
+                  value={selectedDoctorId}
+                  onChange={(e) => setSelectedDoctorId(e.target.value)}
+                  disabled={!doctors.length}
+                >
+                  <option value="" disabled>
+                    {doctors.length ? "Select a clinician" : "No clinicians available"}
+                  </option>
+                  {doctors.map((doctor) => (
+                    <option key={doctor.id} value={doctor.id}>
+                      {doctor.name}{doctor.specialty ? ` - ${doctor.specialty}` : ""}
+                    </option>
+                  ))}
+                </select>
+                <small>Select a registered clinician to grant access to your records.</small>
               </label>
-              <button className="primary-button" disabled={!account || pending}>
+              <button className="primary-button" disabled={!userId || pending || !selectedDoctorId}>
                 <Check size={14} /> Grant Access
               </button>
             </form>
@@ -1854,20 +1387,25 @@ function AccessView({
                 <span className="section-kicker">CLINICIAN LOOKUP</span>
                 <h2>Search patient records</h2>
               </div>
-              <span className="immutable-tag"><Stethoscope size={13} /> VERIFIED CLINICIAN</span>
+              <span className="immutable-tag"><Stethoscope size={13} /> CLINICIAN ACCOUNT</span>
             </div>
             <form className="inline-form" onSubmit={handleLookup}>
               <label className="field">
-                Patient Wallet Address
-                <input
+                Patient
+                <select
                   required
-                  value={patientLookupAddress}
-                  onChange={(e) => setPatientLookupAddress(e.target.value)}
-                  placeholder="0x…"
-                />
+                  value={selectedPatientId}
+                  onChange={(e) => setSelectedPatientId(e.target.value)}
+                  disabled={!patients.length}
+                >
+                  <option value="" disabled>{patients.length ? "Select a patient" : "No patients available"}</option>
+                  {patients.map((patient) => (
+                    <option key={patient.id} value={patient.id}>{patient.name}</option>
+                  ))}
+                </select>
               </label>
-              <button className="primary-button" disabled={lookupLoading}>
-                {lookupLoading ? "Querying ledger..." : "Load Records"}
+              <button className="primary-button" disabled={lookupLoading || !selectedPatientId}>
+                {lookupLoading ? "Loading records..." : "Load Records"}
                 <Search size={14} />
               </button>
             </form>
@@ -1883,13 +1421,18 @@ function AccessView({
             </div>
             <form className="form-grid" onSubmit={handleDoctorSendRequest}>
               <label className="field">
-                Patient Wallet Address
-                <input
+                Patient
+                <select
                   required
-                  value={patientLookupAddress}
-                  onChange={(e) => setPatientLookupAddress(e.target.value)}
-                  placeholder="0x…"
-                />
+                  value={selectedPatientId}
+                  onChange={(e) => setSelectedPatientId(e.target.value)}
+                  disabled={!patients.length}
+                >
+                  <option value="" disabled>{patients.length ? "Select a patient" : "No patients available"}</option>
+                  {patients.map((patient) => (
+                    <option key={patient.id} value={patient.id}>{patient.name}</option>
+                  ))}
+                </select>
               </label>
               <label className="field">
                 Clinical Reason for Access
@@ -1902,8 +1445,8 @@ function AccessView({
               </label>
               <div className="form-footer">
                 <span>The request will appear in the patient&apos;s Consent Queue for approval.</span>
-                <button className="primary-button" disabled={pending}>
-                  <SendIcon size={14} /> Request Medical Access
+                <button className="primary-button" disabled={pending || !selectedPatientId}>
+                  <ArrowUpRight size={14} /> Request Medical Access
                 </button>
               </div>
             </form>
@@ -1919,7 +1462,7 @@ function AccessView({
                   <thead>
                     <tr>
                       <th>RECORD</th>
-                      <th>CHECKSUM</th>
+                      <th>SUMMARY</th>
                       <th>DATE</th>
                     </tr>
                   </thead>
@@ -1928,9 +1471,9 @@ function AccessView({
                       <tr key={r.id.toString()}>
                         <td>
                           <strong>{r.title || `Record #${r.id}`}</strong>
-                          <div style={{ fontSize: "10px", color: "#688579" }}>{r.description}</div>
+                          <div style={{ fontSize: "11px", color: "#688579" }}>{r.category}</div>
                         </td>
-                        <td className="mono-cell">{shortAddress(r.digest)}</td>
+                        <td>{r.description || "No summary provided."}</td>
                         <td>{new Date(Number(r.createdAt) * 1000).toLocaleDateString()}</td>
                       </tr>
                     ))}
@@ -1942,64 +1485,156 @@ function AccessView({
         </>
       )}
 
-      {!isPatient && !roles.doctor && <AccessDenied />}
+      {/* Administrator View: Network Consent & Access Audit Log */}
+      {roles.admin && (
+        <>
+          <section className="panel">
+            <div className="panel-heading">
+              <div>
+                <span className="section-kicker">GOVERNANCE AUDIT</span>
+                <h2>Network Access Requests <span className="heading-count">{accessRequests.length}</span></h2>
+              </div>
+              <span className="immutable-tag"><LockKeyhole size={13} /> CONSENT AUDIT</span>
+            </div>
+            {accessRequests.length ? (
+              <div className="record-table-wrap">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>CLINICIAN</th>
+                      <th>PATIENT</th>
+                      <th>CLINICAL REASON</th>
+                      <th>REQUESTED AT</th>
+                      <th>STATUS</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {accessRequests.map((req) => (
+                      <tr key={req.id}>
+                        <td>
+                          <strong>{req.doctorName || `Doctor #${req.doctorId}`}</strong>
+                          {req.specialty && <div style={{ fontSize: "11px", color: "#6a8578" }}>{req.specialty}</div>}
+                        </td>
+                        <td>
+                          <strong>{req.patientName || `Patient #${req.patientId}`}</strong>
+                        </td>
+                        <td>{req.reason || "Clinical evaluation"}</td>
+                        <td>{new Date(Number(req.requestedAt) * 1000).toLocaleString([], { dateStyle: "short", timeStyle: "short" })}</td>
+                        <td>
+                          <StatusBadge
+                            status={req.status === 1 ? "Approved" : req.status === 0 ? "Pending" : "Declined"}
+                            tone={req.status === 1 ? "green" : req.status === 0 ? "amber" : "neutral"}
+                          />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <EmptyState
+                icon={ShieldCheck}
+                title="No access requests recorded"
+                message="Access requests between clinicians and patients will appear here for audit."
+              />
+            )}
+          </section>
+
+          {accessLogs && accessLogs.length > 0 && (
+            <section className="panel">
+              <div className="panel-heading">
+                <div>
+                  <span className="section-kicker">ACTIVE PERMISSIONS</span>
+                  <h2>Granted Direct Access Log <span className="heading-count">{accessLogs.length}</span></h2>
+                </div>
+              </div>
+              <div className="record-table-wrap">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>CLINICIAN</th>
+                      <th>PATIENT</th>
+                      <th>PURPOSE</th>
+                      <th>STATUS</th>
+                      <th>EXPIRES</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {accessLogs.map((log) => (
+                      <tr key={log.id}>
+                        <td>{log.doctorName || `Doctor #${log.doctorId}`}</td>
+                        <td>{log.patientName || `Patient #${log.patientId}`}</td>
+                        <td>{log.purpose}</td>
+                        <td>
+                          <StatusBadge
+                            status={log.granted ? "Active" : "Revoked"}
+                            tone={log.granted ? "green" : "neutral"}
+                          />
+                        </td>
+                        <td>{log.expiresAt ? new Date(Number(log.expiresAt) * 1000).toLocaleDateString() : "No expiry"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
+        </>
+      )}
+
+      {!isPatient && !roles.doctor && !roles.admin && <AccessDenied />}
     </div>
   );
 }
 
-function SendIcon({ size }) {
-  return <ArrowUpRight size={size} />;
-}
-
 // -------------------------------------------------------------
-// VIEW 4: Appointments with Escrow
+// VIEW 4: Appointments
 // -------------------------------------------------------------
 function AppointmentsView({
-  account,
   userId,
+  userName,
   roles,
-  sandboxMode,
   doctors,
   appointments,
   pending,
   runTransaction,
   setAppointments
 }) {
-  const [doctor, setDoctor] = useState("");
+  const [doctorId, setDoctorId] = useState("");
   const [startsAt, setStartsAt] = useState("");
-  const [fee, setFee] = useState("0.02");
+  const [fee, setFee] = useState("");
 
   const isPatient = roles.patient;
 
   useEffect(() => {
-    if (!doctor && doctors.length) {
-      setDoctor(doctors[0].address);
+    if (!doctorId && doctors.length) {
+      setDoctorId(String(doctors[0].id));
       setFee(doctors[0].fee);
     }
-  }, [doctor, doctors]);
+  }, [doctorId, doctors]);
 
   const book = async (event) => {
     event.preventDefault();
-    if (!isAddress(doctor) || !startsAt || !fee) return;
+    const selectedDoctor = doctors.find((item) => String(item.id) === doctorId);
+    if (!selectedDoctor || !startsAt || !fee) return;
     const timestamp = Math.floor(new Date(startsAt).getTime() / 1000);
 
     const success = await runTransaction(
-      async () => {
-        const signer = await new BrowserProvider(window.ethereum).getSigner();
-        return makeContract(signer).bookAppointment(doctor, timestamp, { value: parseEther(fee) });
-      },
-      sandboxMode ? "Appointment saved to the database." : "Appointment booked! Fee is held in smart contract escrow.",
+      async () => {},
+      "Appointment saved to the database.",
       async () => {
         const result = await apiRequest("/api/appointments", {
           method: "POST",
-          body: JSON.stringify({ userId, doctorWallet: doctor, startsAt, fee })
+          body: JSON.stringify({ userId, doctorId: selectedDoctor.id, startsAt, fee })
         });
         const newApt = {
           id: result.id,
-          patient: account,
-          doctor,
+          patientId: Number(userId),
+          patientName: userName,
+          doctorId: selectedDoctor.id,
+          doctorName: selectedDoctor.name,
           startsAt: timestamp,
-          fee: parseEther(fee),
+          fee: Number(fee),
           status: 0
         };
         setAppointments([newApt, ...appointments]);
@@ -2013,17 +1648,11 @@ function AppointmentsView({
 
   const appointmentAction = (item, action, label) =>
     runTransaction(
-      async () => {
-        const signer = await new BrowserProvider(window.ethereum).getSigner();
-        return makeContract(signer)[action](
-          item.id,
-          ...(action === "respondToAppointment" ? [label === "Accept"] : [])
-        );
-      },
+      async () => {},
       label === "Accept"
         ? "Appointment confirmed by clinician."
         : label === "Complete"
-        ? "Appointment completed! Escrow released to doctor."
+        ? "Appointment completed."
         : "Appointment updated.",
       async () => {
         const actionName = action === "respondToAppointment"
@@ -2047,14 +1676,14 @@ function AppointmentsView({
 
   return (
     <div className="content-stack">
-      {/* Verified Doctors Directory */}
+      {/* Registered clinicians */}
       <section className="panel">
         <div className="panel-heading">
           <div>
-            <span className="section-kicker">VERIFIED CLINICIANS DIRECTORY</span>
+            <span className="section-kicker">CLINICIAN DIRECTORY</span>
             <h2>Choose a specialist</h2>
           </div>
-          <span className="escrow-tag"><ShieldCheck size={13} /> {sandboxMode ? "REGISTERED DOCTORS" : "ON-CHAIN VERIFIED"}</span>
+          <span className="escrow-tag"><ShieldCheck size={13} /> REGISTERED CLINICIANS</span>
         </div>
         <div className="doctor-grid">
           {doctors.map((item) => (
@@ -2066,21 +1695,20 @@ function AppointmentsView({
                   <span>{item.specialty}</span>
                 </div>
               </div>
-              <div style={{ fontSize: "10px", color: "#698177" }}>
-                License: {item.license} · {shortAddress(item.address)}
+              <div style={{ fontSize: "11px", color: "#698177" }}>
+                License: {item.license}
               </div>
               <div className="doctor-card-footer">
-                <span className="doctor-fee">{item.fee} ETH / consultation</span>
                 {isPatient && (
                   <button
                     className="secondary-button"
-                    style={{ minHeight: "28px", padding: "0 8px", fontSize: "10px" }}
+                    style={{ minHeight: "28px", padding: "0 8px", fontSize: "11px" }}
                     onClick={() => {
-                      setDoctor(item.address);
+                      setDoctorId(String(item.id));
                       setFee(item.fee);
                     }}
                   >
-                    {doctor === item.address ? "Selected" : "Select Doctor"}
+                    {doctorId === String(item.id) ? "Selected" : "Select Doctor"}
                   </button>
                 )}
               </div>
@@ -2094,20 +1722,20 @@ function AppointmentsView({
           <div className="panel-heading">
             <div>
               <span className="section-kicker">NEW VISIT</span>
-              <h2>{sandboxMode ? "Book an appointment" : "Book an appointment with escrow"}</h2>
+              <h2>Book an appointment</h2>
             </div>
-            <span className="escrow-tag"><LockKeyhole size={13} /> {sandboxMode ? "DATABASE DEMO" : "ESCROW PROTECTED"}</span>
           </div>
           <form className="form-grid" onSubmit={book}>
             <label className="field">
               Selected Clinician
-              <select value={doctor} onChange={(event) => {
-                const selected = doctors.find((item) => item.address === event.target.value);
-                setDoctor(event.target.value);
+              <select value={doctorId} onChange={(event) => {
+                const selected = doctors.find((item) => String(item.id) === event.target.value);
+                setDoctorId(event.target.value);
                 if (selected) setFee(selected.fee);
               }} required>
+                <option value="" disabled>Select a clinician</option>
                 {doctors.map((item) => (
-                  <option value={item.address} key={item.id}>{item.name} · {item.specialty}</option>
+                  <option value={item.id} key={item.id}>{item.name} · {item.specialty}</option>
                 ))}
               </select>
             </label>
@@ -2121,25 +1749,10 @@ function AppointmentsView({
                 min={new Date(Date.now() + 60000).toISOString().slice(0, 16)}
               />
             </label>
-            <label className="field">
-              Consultation Fee
-              <span className="input-suffix">
-                <input
-                  required
-                  type="number"
-                  min="0.0001"
-                  step="0.0001"
-                  value={fee}
-                  readOnly
-                  onChange={(event) => setFee(event.target.value)}
-                />
-                <span>ETH</span>
-              </span>
-            </label>
             <div className="form-footer">
-              <span>{sandboxMode ? "The demo saves the booking to MySQL and does not take payment." : "Payment remains locked in smart contract until the consultation is concluded."}</span>
-              <button className="primary-button" disabled={!account || pending}>
-                <CalendarDays size={15} /> Book & Escrow Payment
+              <span>Your appointment request will be sent to the selected clinician.</span>
+              <button className="primary-button" disabled={!userId || !doctorId || pending}>
+                <CalendarDays size={15} /> Book Appointment
               </button>
             </div>
           </form>
@@ -2160,7 +1773,7 @@ function AppointmentsView({
               <AppointmentRow
                 key={item.id}
                 item={item}
-                account={account}
+                userId={userId}
                 actions={roles.patient || roles.doctor ? appointmentAction : null}
                 pending={pending}
               />
@@ -2170,7 +1783,7 @@ function AppointmentsView({
           <EmptyState
             icon={CalendarDays}
             title="No appointments scheduled"
-            message={account ? "Bookings linked to this wallet will appear here." : "Connect wallet to view appointments."}
+            message="Your scheduled visits will appear here."
           />
         )}
       </section>
@@ -2178,9 +1791,9 @@ function AppointmentsView({
   );
 }
 
-function AppointmentRow({ item, account, compact = false, actions, pending }) {
+function AppointmentRow({ item, userId, compact = false, actions, pending }) {
   const status = Number(item.status);
-  const isPatient = account?.toLowerCase() === item.patient?.toLowerCase();
+  const isPatient = Number(userId) === Number(item.patientId);
   const visitStarted = Date.now() >= Number(item.startsAt) * 1000;
   return (
     <div className={`appointment-row ${compact ? "compact-row" : ""}`}>
@@ -2188,8 +1801,8 @@ function AppointmentRow({ item, account, compact = false, actions, pending }) {
       <div className="appointment-main">
         <strong>
           {isPatient
-            ? `With Clinician ${shortAddress(item.doctor)}`
-            : `Patient ${shortAddress(item.patient)}`}
+            ? `With ${item.doctorName || "your clinician"}`
+            : `With ${item.patientName || "patient"}`}
         </strong>
         <span>
           <Clock3 size={13} />
@@ -2197,7 +1810,6 @@ function AppointmentRow({ item, account, compact = false, actions, pending }) {
         </span>
       </div>
       <div className="appointment-meta">
-        <strong>{formatEther(item.fee)} ETH</strong>
         <StatusBadge
           status={appointmentLabels[status] || "Unknown"}
           tone={status === 1 ? "green" : status === 0 ? "amber" : "neutral"}
@@ -2219,7 +1831,7 @@ function AppointmentRow({ item, account, compact = false, actions, pending }) {
                 disabled={pending}
                 onClick={() => actions(item, "respondToAppointment", "Decline")}
               >
-                <X size={14} /> Decline & Refund
+                <X size={14} /> Decline
               </button>
             </>
           )}
@@ -2229,7 +1841,7 @@ function AppointmentRow({ item, account, compact = false, actions, pending }) {
               disabled={pending}
               onClick={() => actions(item, "cancelAppointment", "Cancel")}
             >
-              Cancel & Refund
+              Cancel Appointment
             </button>
           )}
           {status === 1 && !isPatient && (
@@ -2239,7 +1851,7 @@ function AppointmentRow({ item, account, compact = false, actions, pending }) {
               title={visitStarted ? undefined : "Available after the scheduled appointment time"}
               onClick={() => actions(item, "completeAppointment", "Complete")}
             >
-              Complete Visit & Release Escrow
+              Complete Visit
             </button>
           )}
         </div>
@@ -2249,356 +1861,125 @@ function AppointmentRow({ item, account, compact = false, actions, pending }) {
 }
 
 // -------------------------------------------------------------
-// VIEW 5: Insurance Claims
+// VIEW 5: Network Administration
 // -------------------------------------------------------------
-function ClaimsView({
-  account,
-  userId,
-  sandboxMode,
-  roles,
-  claims,
-  claimPool,
-  pending,
-  runTransaction,
-  setClaims,
-  setClaimPool
-}) {
-  const [uri, setUri] = useState("");
-  const [amount, setAmount] = useState("0.015");
+function AdminView({ users, accessRequests = [], records = [], appointments = [] }) {
+  const [filterRole, setFilterRole] = useState("all");
+  const [searchQuery, setSearchQuery] = useState("");
 
-  const isPatient = account && !roles.doctor && !roles.insurer && !roles.admin;
+  const filteredUsers = (users || []).filter((user) => {
+    const matchesRole = filterRole === "all" || user.role === filterRole;
+    const matchesSearch = !searchQuery ||
+      user.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      user.email.toLowerCase().includes(searchQuery.toLowerCase());
+    return matchesRole && matchesSearch;
+  });
 
-  const submit = async (event) => {
-    event.preventDefault();
-    const success = await runTransaction(
-      async () => {
-        const signer = await new BrowserProvider(window.ethereum).getSigner();
-        return makeContract(signer).submitClaim(uri.trim(), parseEther(amount));
-      },
-      sandboxMode ? "Insurance claim saved for administrator review." : "Insurance claim submitted. Queued for insurer smart contract review.",
-      async () => {
-        const result = await apiRequest("/api/claims", {
-          method: "POST",
-          body: JSON.stringify({
-            userId,
-            encryptedEvidenceUri: uri.trim(),
-            amount
-          })
-        });
-        const newClaim = {
-          id: result.id,
-          patient: account,
-          encryptedEvidenceUri: uri.trim(),
-          amount: parseEther(amount),
-          status: 0
-        };
-        setClaims([newClaim, ...claims]);
-      }
-    );
-    if (success) setUri("");
-  };
-
-  const claimAction = (item, approve) =>
-    runTransaction(
-      async () => {
-        const signer = await new BrowserProvider(window.ethereum).getSigner();
-        return makeContract(signer).resolveClaim(item.id, approve);
-      },
-      sandboxMode
-        ? approve ? "Claim approved in the database. No ETH was transferred." : "Claim declined."
-        : approve ? "Claim approved! Payment transferred from pool to patient." : "Claim declined.",
-      async () => {
-        await apiRequest(`/api/claims/${item.id}`, {
-          method: "PATCH",
-          body: JSON.stringify({ userId, approved: approve })
-        });
-        setClaims(
-          claims.map((c) => (c.id === item.id ? { ...c, status: approve ? 1 : 2 } : c))
-        );
-        if (approve) {
-          const payoutEth = parseFloat(formatEther(item.amount));
-          setClaimPool((prev) => Math.max(0, parseFloat(prev) - payoutEth).toFixed(3));
-        }
-      }
-    );
-
-  const fundPool = async (event) => {
-    event.preventDefault();
-    const formElement = event.currentTarget;
-    const form = new FormData(formElement);
-    const value = form.get("poolAmount");
-    if (!value || Number(value) <= 0) return;
-
-    await runTransaction(
-      async () => {
-        const signer = await new BrowserProvider(window.ethereum).getSigner();
-        return makeContract(signer).fundClaimPool({ value: parseEther(value) });
-      },
-      `Claim liquidity pool funded with ${value} ETH!`,
-      () => {
-        setClaimPool((prev) => (parseFloat(prev) + parseFloat(value)).toFixed(3));
-      }
-    );
-    formElement.reset();
-  };
-
-  return (
-    <div className="content-stack">
-      {/* Insurer Claims Pool Strip */}
-      <section className="pool-strip">
-        <div>
-          <span className="pool-label">INSURANCE LIQUIDITY POOL</span>
-          <strong>{sandboxMode ? "Database demo · no ETH pool" : `${Number(claimPool).toFixed(3)} ETH AVAILABLE`}</strong>
-        </div>
-        {!sandboxMode && (roles.insurer || roles.admin) && (
-          <form onSubmit={fundPool}>
-            <label className="visually-hidden" htmlFor="pool-amount">Amount to fund</label>
-            <input
-              id="pool-amount"
-              name="poolAmount"
-              type="number"
-              min="0.001"
-              step="0.001"
-              placeholder="Amount in ETH"
-              required
-            />
-            <button className="secondary-button" disabled={pending}>
-              <ArrowDownLeft size={15} /> Fund Claims Pool
-            </button>
-          </form>
-        )}
-        {sandboxMode && (
-          <span className="pool-label">Database demo mode · no ETH is transferred</span>
-        )}
-      </section>
-
-      {isPatient && (
-        <section className="panel form-panel">
-          <div className="panel-heading">
-            <div>
-              <span className="section-kicker">PATIENT SUBMISSION</span>
-              <h2>Submit an insurance claim</h2>
-            </div>
-            <span className="immutable-tag"><LockKeyhole size={13} /> ENCRYPTED EVIDENCE</span>
-          </div>
-          <form className="form-grid" onSubmit={submit}>
-            <label className="field field-wide">
-              Encrypted Evidence / Invoice URI
-              <input
-                required
-                value={uri}
-                onChange={(event) => setUri(event.target.value)}
-                placeholder="ipfs://bafybei..."
-              />
-              <small>Submit only an IPFS pointer to encrypted invoices or discharge summaries.</small>
-            </label>
-            <label className="field">
-              Requested Claim Amount
-              <span className="input-suffix">
-                <input
-                  required
-                  type="number"
-                  min="0.0001"
-                  step="0.0001"
-                  value={amount}
-                  onChange={(event) => setAmount(event.target.value)}
-                />
-                <span>ETH</span>
-              </span>
-            </label>
-            <div className="form-footer">
-              <span>Claims pool balance: {Number(claimPool).toFixed(3)} ETH</span>
-              <button className="primary-button" disabled={!account || pending}>
-                <Plus size={15} /> File Claim
-              </button>
-            </div>
-          </form>
-        </section>
-      )}
-
-      <section className="panel">
-        <div className="panel-heading">
-          <div>
-            <span className="section-kicker">CLAIMS AUDIT LOG</span>
-            <h2>{roles.insurer ? "Review Queue" : "Claim Records"} <span className="heading-count">{claims.length}</span></h2>
-          </div>
-          <span className="panel-dot" />
-        </div>
-        {claims.length ? (
-          <div className="claim-list">
-            {claims.map((claim) => (
-              <div className="claim-row" key={claim.id}>
-                <span className="claim-icon"><ClipboardList size={17} /></span>
-                <div className="claim-info">
-                  <strong>Claim #{claim.id}</strong>
-                  <span>{shortAddress(claim.patient)} <i /> Evidence: {shortAddress(claim.encryptedEvidenceUri)}</span>
-                </div>
-                <strong className="claim-amount">{formatEther(claim.amount)} ETH</strong>
-                <StatusBadge
-                  status={claimLabels[Number(claim.status)] || "Unknown"}
-                  tone={Number(claim.status) === 1 ? "green" : Number(claim.status) === 0 ? "amber" : "neutral"}
-                />
-                {(roles.insurer || roles.admin) && Number(claim.status) === 0 && (
-                  <div className="row-actions">
-                    <button
-                      className="small-accept"
-                      disabled={pending}
-                      onClick={() => claimAction(claim, true)}
-                    >
-                      <Check size={14} /> {sandboxMode ? "Approve claim" : "Approve & Pay"}
-                    </button>
-                    <button
-                      className="small-reject"
-                      disabled={pending}
-                      onClick={() => claimAction(claim, false)}
-                    >
-                      <X size={14} /> Decline
-                    </button>
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        ) : (
-          <EmptyState
-            icon={ClipboardList}
-            title="No claims submitted"
-            message={account ? "Submitted insurance claims will appear here." : "Connect wallet to view claims."}
-          />
-        )}
-      </section>
-    </div>
-  );
-}
-
-// -------------------------------------------------------------
-// VIEW 6: Network Administration
-// -------------------------------------------------------------
-function AdminView({ users, sandboxMode, pending, runTransaction, claimPool }) {
-  const [doctor, setDoctor] = useState("");
-  const [insurer, setInsurer] = useState("");
-
-  const approve = async (event, kind, address, setter) => {
-    event.preventDefault();
-    if (!isAddress(address)) return;
-    const method = kind === "doctor" ? "setDoctorApproval" : "setInsurerApproval";
-
-    const success = await runTransaction(
-      async () => {
-        const signer = await new BrowserProvider(window.ethereum).getSigner();
-        return makeContract(signer)[method](address, true);
-      },
-      `${kind === "doctor" ? "Clinician" : "Insurer"} approved on-chain for the network.`,
-      () => {
-        setter("");
-      }
-    );
-
-    if (success) setter("");
-  };
+  const patientCount = (users || []).filter((u) => u.role === "patient").length;
+  const doctorCount = (users || []).filter((u) => u.role === "doctor").length;
+  const adminCount = (users || []).filter((u) => u.role === "administrator").length;
 
   return (
     <div className="content-stack">
       <div className="privacy-callout admin-callout">
         <ShieldCheck size={17} />
         <div>
-          <strong>Administrator Authority</strong>
-          <span>
-            Only the deploying wallet can approve clinicians and insurers. Verify credential databases out-of-band
-            prior to approving any address.
-          </span>
+          <strong>Healthcare Network Administration</strong>
+          <span>Review registered accounts, role configurations, and system-wide medical governance.</span>
         </div>
       </div>
 
-      {sandboxMode ? (
-        <div className="privacy-callout">
-          <Users size={17} />
-          <div>
-            <strong>Database account directory</strong>
-            <span>Network approvals require connecting the administrator wallet to the deployed contract.</span>
-          </div>
+      {/* Summary Cards */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "12px" }}>
+        <div style={{ background: "#ffffff", padding: "14px 18px", borderRadius: "10px", border: "1px solid #dfe9e4" }}>
+          <div style={{ fontSize: "11px", color: "#6a867b", fontWeight: 700 }}>PATIENTS</div>
+          <div style={{ fontSize: "24px", color: "#1d3d32", fontWeight: 800, marginTop: "4px" }}>{patientCount}</div>
         </div>
-      ) : (
-      <div className="admin-grid">
-        <section className="panel form-panel">
-          <div className="panel-heading">
-            <div>
-              <span className="section-kicker">ROLE MANAGEMENT</span>
-              <h2>Approve clinician</h2>
-            </div>
-            <span className="quick-icon quick-mint"><Stethoscope size={17} /></span>
-          </div>
-          <form className="simple-form" onSubmit={(event) => approve(event, "doctor", doctor, setDoctor)}>
-            <label className="field">
-              Clinician Wallet Address
-              <input
-                required
-                value={doctor}
-                onChange={(event) => setDoctor(event.target.value)}
-                placeholder="0x…"
-              />
-            </label>
-            <button className="primary-button" disabled={pending}>
-              <BadgeCheck size={15} /> Authorize Clinician
-            </button>
-          </form>
-        </section>
-
-        <section className="panel form-panel">
-          <div className="panel-heading">
-            <div>
-              <span className="section-kicker">ROLE MANAGEMENT</span>
-              <h2>Approve insurer</h2>
-            </div>
-            <span className="quick-icon quick-blue"><ShieldCheck size={17} /></span>
-          </div>
-          <form className="simple-form" onSubmit={(event) => approve(event, "insurer", insurer, setInsurer)}>
-            <label className="field">
-              Insurer Wallet Address
-              <input
-                required
-                value={insurer}
-                onChange={(event) => setInsurer(event.target.value)}
-                placeholder="0x…"
-              />
-            </label>
-            <button className="primary-button" disabled={pending}>
-              <BadgeCheck size={15} /> Authorize Insurer
-            </button>
-          </form>
-        </section>
+        <div style={{ background: "#ffffff", padding: "14px 18px", borderRadius: "10px", border: "1px solid #dfe9e4" }}>
+          <div style={{ fontSize: "11px", color: "#6a867b", fontWeight: 700 }}>CLINICIANS</div>
+          <div style={{ fontSize: "24px", color: "#1d3d32", fontWeight: 800, marginTop: "4px" }}>{doctorCount}</div>
+        </div>
+        <div style={{ background: "#ffffff", padding: "14px 18px", borderRadius: "10px", border: "1px solid #dfe9e4" }}>
+          <div style={{ fontSize: "11px", color: "#6a867b", fontWeight: 700 }}>ADMINISTRATORS</div>
+          <div style={{ fontSize: "24px", color: "#1d3d32", fontWeight: 800, marginTop: "4px" }}>{adminCount}</div>
+        </div>
+        <div style={{ background: "#ffffff", padding: "14px 18px", borderRadius: "10px", border: "1px solid #dfe9e4" }}>
+          <div style={{ fontSize: "11px", color: "#6a867b", fontWeight: 700 }}>TOTAL ACCOUNTS</div>
+          <div style={{ fontSize: "24px", color: "#1d3d32", fontWeight: 800, marginTop: "4px" }}>{users?.length || 0}</div>
+        </div>
       </div>
-      )}
 
       <section className="panel">
         <div className="panel-heading">
           <div>
             <span className="section-kicker">REGISTERED ACCOUNTS</span>
-            <h2>Users <span className="heading-count">{users.length}</span></h2>
+            <h2>User Directory <span className="heading-count">{filteredUsers.length}</span></h2>
+          </div>
+          <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+            <input
+              type="text"
+              placeholder="Search by name or email..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              style={{
+                height: "32px",
+                padding: "0 10px",
+                borderRadius: "6px",
+                border: "1px solid #dfe8e3",
+                fontSize: "12px",
+                width: "180px"
+              }}
+            />
           </div>
         </div>
-        <div className="record-table-wrap">
+
+        {/* Filter Pills */}
+        <div style={{ display: "flex", gap: "8px", padding: "12px 18px 0", flexWrap: "wrap" }}>
+          {[
+            { label: "All Users", value: "all" },
+            { label: "Patients", value: "patient" },
+            { label: "Clinicians", value: "doctor" },
+            { label: "Administrators", value: "administrator" }
+          ].map((f) => (
+            <button
+              key={f.value}
+              className={`sandbox-role-btn ${filterRole === f.value ? "active" : ""}`}
+              onClick={() => setFilterRole(f.value)}
+              style={{ padding: "4px 10px", fontSize: "11px" }}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="record-table-wrap" style={{ marginTop: "10px" }}>
           <table className="data-table">
-            <thead><tr><th>NAME</th><th>EMAIL</th><th>ROLE</th><th>WALLET</th></tr></thead>
+            <thead>
+              <tr>
+                <th>USER ID</th>
+                <th>NAME</th>
+                <th>EMAIL</th>
+                <th>ROLE</th>
+                <th>ASSIGNED ROLE BADGE</th>
+              </tr>
+            </thead>
             <tbody>
-              {users.map((user) => (
+              {filteredUsers.map((user) => (
                 <tr key={user.id}>
-                  <td>{user.name}</td>
+                  <td><strong>#{user.id}</strong></td>
+                  <td><strong>{user.name}</strong></td>
                   <td>{user.email}</td>
-                  <td>{user.role}</td>
-                  <td className="mono-cell">{shortAddress(user.wallet)}</td>
+                  <td style={{ textTransform: "capitalize" }}>{user.role}</td>
+                  <td>
+                    <StatusBadge
+                      status={user.role === "administrator" ? "Admin" : user.role === "doctor" ? "Clinician" : "Patient"}
+                      tone={user.role === "administrator" ? "amber" : user.role === "doctor" ? "blue" : "green"}
+                    />
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
-        </div>
-      </section>
-
-      <section className="panel" style={{ padding: "16px 18px" }}>
-        <h3 style={{ margin: "0 0 10px", fontSize: "13px", color: "#224136" }}>Network Health Status</h3>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "10px", fontSize: "11px" }}>
-          <div>Claims Pool: <strong>{sandboxMode ? "On-chain only" : `${claimPool} ETH`}</strong></div>
-          <div>Contract Status: <strong style={{ color: sandboxMode ? "#9b6730" : "#2b7e64" }}>{sandboxMode ? "Wallet not connected" : "Active &amp; Operational"}</strong></div>
         </div>
       </section>
     </div>
@@ -2632,8 +2013,8 @@ function AccessDenied() {
     <section className="panel">
       <EmptyState
         icon={ShieldAlert}
-        title="Administrator access required"
-        message="Connect the wallet that deployed this contract to manage network roles and governance."
+        title="Unauthorized"
+        message="Your account does not have permission to view this section."
       />
     </section>
   );

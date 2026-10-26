@@ -2,6 +2,7 @@ const express = require("express");
 const cors = require("cors");
 const crypto = require("crypto");
 const path = require("path");
+const fs = require("fs");
 const { pool } = require("./dbConnection");
 
 const app = express();
@@ -22,7 +23,6 @@ const recordTypes = {
 };
 const appointmentStatuses = { pending: 0, accepted: 1, completed: 2, cancelled: 3 };
 const requestStatuses = { pending: 0, approved: 1, rejected: 2 };
-const claimStatuses = { pending: 0, approved: 1, paid: 1, rejected: 2 };
 const tokenSecret = process.env.JWT_SECRET || "local-demo-secret-change-before-deployment";
 
 function createSessionToken(user) {
@@ -60,7 +60,7 @@ function requireAuth(req, res, next) {
 
 async function findActor(userId) {
   const [rows] = await pool.execute(
-    "SELECT id, name, email, role, wallet FROM users WHERE id = ?",
+    "SELECT id, name, email, role FROM users WHERE id = ?",
     [Number(userId)]
   );
   return rows[0] || null;
@@ -73,24 +73,19 @@ function respondWithError(res, error) {
 
 async function readRecords(whereSql, params) {
   const [rows] = await pool.execute(
-    `SELECT r.*, patient.wallet AS patient_wallet, author.wallet AS author_wallet
-     FROM records r
-     JOIN users patient ON patient.id = r.patient_id
-     JOIN users author ON author.id = r.author_id
-     ${whereSql}
-     ORDER BY r.created_at DESC, r.id DESC`,
+    `SELECT r.* FROM records r ${whereSql} ORDER BY r.created_at DESC, r.id DESC`,
     params
   );
   return rows.map((row) => ({
     id: Number(row.id),
-    patient: row.patient_wallet,
-    author: row.author_wallet,
+    patientId: Number(row.patient_id),
+    authorId: Number(row.author_id),
     category: row.category,
-    encryptedUri: row.encrypted_uri,
-    digest: row.digest,
     recordType: recordTypes[row.category] ?? 0,
     title: row.title,
     description: row.description || "",
+    encryptedUri: row.encrypted_uri || "",
+    digest: row.digest || "",
     createdAt: Math.floor(new Date(row.created_at).getTime() / 1000)
   }));
 }
@@ -101,25 +96,17 @@ app.get("/api/health", (req, res) => {
 
 app.post("/api/login", async (req, res) => {
   const { email, password, role } = req.body || {};
-
   if (!email || !password || !role) {
     return res.status(400).json({ message: "Email, password and role are required." });
   }
-
   let connection;
-
   try {
     connection = await pool.getConnection();
-
     const [rows] = await connection.execute(
-      "SELECT id, name, email, role, wallet FROM users WHERE email = ? AND password = ? AND role = ?",
+      "SELECT id, name, email, role FROM users WHERE email = ? AND password = ? AND role = ?",
       [String(email).trim(), String(password), String(role).trim()]
     );
-
-    if (!rows.length) {
-      return res.status(401).json({ message: "Invalid credentials for the selected role." });
-    }
-
+    if (!rows.length) return res.status(401).json({ message: "Invalid credentials for the selected role." });
     const user = rows[0];
     return res.status(200).json({ user, token: createSessionToken(user) });
   } catch (error) {
@@ -130,154 +117,146 @@ app.post("/api/login", async (req, res) => {
 });
 
 app.get("/api/dashboard", requireAuth, async (req, res) => {
-  try {
-    const actor = await findActor(req.auth.userId);
-    if (!actor) return res.status(404).json({ message: "Account not found." });
+    try {
+      const actor = await findActor(req.auth.userId);
+      if (!actor) return res.status(404).json({ message: "Account not found." });
 
-    let recordWhere = "";
-    let recordParams = [];
-    if (actor.role === "patient") {
-      recordWhere = "WHERE r.patient_id = ?";
-      recordParams = [actor.id];
-    } else if (actor.role === "doctor") {
-      recordWhere = `WHERE EXISTS (
-        SELECT 1 FROM access_logs access
-        WHERE access.patient_id = r.patient_id AND access.doctor_id = ?
-          AND access.granted = TRUE
-          AND (access.expires_at IS NULL OR access.expires_at > NOW())
-      )`;
-      recordParams = [actor.id];
+      let recordWhere = "";
+      let recordParams = [];
+      if (actor.role === "patient") {
+        recordWhere = "WHERE r.patient_id = ?";
+        recordParams = [actor.id];
+      } else if (actor.role === "doctor") {
+        recordWhere = `WHERE EXISTS (
+          SELECT 1 FROM access_logs access
+          WHERE access.patient_id = r.patient_id AND access.doctor_id = ?
+            AND access.granted = TRUE
+            AND (access.expires_at IS NULL OR access.expires_at > NOW())
+        )`;
+        recordParams = [actor.id];
+      }
+      const records = await readRecords(recordWhere, recordParams);
+
+      const appointmentWhere = actor.role === "patient"
+        ? "WHERE a.patient_id = ?"
+        : actor.role === "doctor"
+        ? "WHERE a.doctor_id = ?"
+        : "";
+      const appointmentParams = actor.role === "patient" || actor.role === "doctor" ? [actor.id] : [];
+      const [appointmentRows] = await pool.execute(
+        `SELECT a.*, patient.name AS patient_name, doctor.name AS doctor_name
+         FROM appointments a
+         JOIN users patient ON patient.id = a.patient_id
+         JOIN users doctor ON doctor.id = a.doctor_id
+         ${appointmentWhere} ORDER BY a.starts_at DESC`,
+        appointmentParams
+      );
+
+      let requestWhere = "";
+      let requestParams = [];
+      if (actor.role === "patient") {
+        requestWhere = "WHERE ar.patient_id = ?";
+        requestParams = [actor.id];
+      } else if (actor.role === "doctor") {
+        requestWhere = "WHERE ar.doctor_id = ?";
+        requestParams = [actor.id];
+      }
+      const [requestRows] = await pool.execute(
+        `SELECT ar.*, patient.name AS patient_name, doctor.name AS doctor_name, dp.specialty
+         FROM access_requests ar
+         JOIN users patient ON patient.id = ar.patient_id
+         JOIN users doctor ON doctor.id = ar.doctor_id
+         LEFT JOIN doctor_profiles dp ON dp.user_id = doctor.id
+         ${requestWhere} ORDER BY ar.requested_at DESC`,
+        requestParams
+      );
+
+      let logWhere = "";
+      let logParams = [];
+      if (actor.role === "patient") {
+        logWhere = "WHERE al.patient_id = ? AND al.granted = TRUE AND (al.expires_at IS NULL OR al.expires_at > NOW())";
+        logParams = [actor.id];
+      } else if (actor.role === "doctor") {
+        logWhere = "WHERE al.doctor_id = ?";
+        logParams = [actor.id];
+      }
+      const [logRows] = await pool.execute(
+        `SELECT al.*, patient.name AS patient_name, doctor.name AS doctor_name
+         FROM access_logs al
+         JOIN users patient ON patient.id = al.patient_id
+         JOIN users doctor ON doctor.id = al.doctor_id
+         ${logWhere} ORDER BY al.created_at DESC`,
+        logParams
+      );
+
+      const [doctors] = await pool.execute(
+        `SELECT u.id, u.name, dp.specialty, dp.license_number, dp.consultation_fee
+         FROM users u JOIN doctor_profiles dp ON dp.user_id = u.id
+         WHERE u.role = 'doctor' ORDER BY u.name`
+      );
+      const [patients] = actor.role === "doctor"
+        ? await pool.execute("SELECT id, name FROM users WHERE role = 'patient' ORDER BY name")
+        : [[]];
+      const [profileRows] = actor.role === "patient"
+        ? await pool.execute("SELECT * FROM patient_profiles WHERE user_id = ?", [actor.id])
+        : actor.role === "doctor"
+        ? await pool.execute("SELECT * FROM doctor_profiles WHERE user_id = ?", [actor.id])
+        : [[]];
+      const [adminUsers] = actor.role === "administrator"
+        ? await pool.execute("SELECT id, name, email, role, created_at FROM users ORDER BY id")
+        : [[]];
+
+      res.json({
+        profile: profileRows[0] || null,
+        doctors: doctors.map((doctor) => ({
+          id: Number(doctor.id),
+          name: doctor.name,
+          specialty: doctor.specialty,
+          license: doctor.license_number,
+          fee: String(doctor.consultation_fee).match(/[0-9]+(?:\.[0-9]+)?/)?.[0] || "0"
+        })),
+        patients: patients.map((patient) => ({
+          id: Number(patient.id),
+          name: patient.name
+        })),
+        records,
+        appointments: appointmentRows.map((item) => ({
+          id: Number(item.id),
+          patientId: Number(item.patient_id),
+          patientName: item.patient_name,
+          doctorId: Number(item.doctor_id),
+          doctorName: item.doctor_name,
+          startsAt: Math.floor(new Date(item.starts_at).getTime() / 1000),
+          fee: String(item.fee),
+          status: appointmentStatuses[item.status] ?? 0
+        })),
+        accessRequests: requestRows.map((item) => ({
+          id: Number(item.id),
+          doctorId: Number(item.doctor_id),
+          doctorName: item.doctor_name,
+          specialty: item.specialty,
+          patientId: Number(item.patient_id),
+          patientName: item.patient_name,
+          reason: item.reason || "",
+          status: requestStatuses[item.status] ?? 0,
+          requestedAt: Math.floor(new Date(item.requested_at).getTime() / 1000)
+        })),
+        accessLogs: logRows.map((item) => ({
+          id: Number(item.id),
+          doctorId: Number(item.doctor_id),
+          doctorName: item.doctor_name,
+          patientId: Number(item.patient_id),
+          patientName: item.patient_name,
+          purpose: item.purpose,
+          granted: Boolean(item.granted),
+          expiresAt: item.expires_at ? Math.floor(new Date(item.expires_at).getTime() / 1000) : null
+        })),
+        users: adminUsers
+      });
+    } catch (error) {
+      return respondWithError(res, error);
     }
-    const records = await readRecords(recordWhere, recordParams);
-
-    const appointmentWhere = actor.role === "patient"
-      ? "WHERE a.patient_id = ?"
-      : actor.role === "doctor"
-      ? "WHERE a.doctor_id = ?"
-      : "";
-    const appointmentParams = actor.role === "patient" || actor.role === "doctor" ? [actor.id] : [];
-    const [appointmentRows] = await pool.execute(
-      `SELECT a.*, patient.wallet AS patient_wallet, doctor.wallet AS doctor_wallet
-       FROM appointments a
-       JOIN users patient ON patient.id = a.patient_id
-       JOIN users doctor ON doctor.id = a.doctor_id
-       ${appointmentWhere} ORDER BY a.starts_at DESC`,
-      appointmentParams
-    );
-
-    const claimWhere = actor.role === "patient" ? "WHERE c.patient_id = ?" : actor.role === "administrator" ? "" : "WHERE 1 = 0";
-    const claimParams = actor.role === "patient" ? [actor.id] : [];
-    const [claimRows] = await pool.execute(
-      `SELECT c.*, patient.wallet AS patient_wallet
-       FROM insurance_claims c JOIN users patient ON patient.id = c.patient_id
-       ${claimWhere} ORDER BY c.created_at DESC`,
-      claimParams
-    );
-
-    let requestWhere = "";
-    let requestParams = [];
-    if (actor.role === "patient") {
-      requestWhere = "WHERE ar.patient_id = ?";
-      requestParams = [actor.id];
-    } else if (actor.role === "doctor") {
-      requestWhere = "WHERE ar.doctor_id = ?";
-      requestParams = [actor.id];
-    }
-    const [requestRows] = await pool.execute(
-      `SELECT ar.*, patient.wallet AS patient_wallet, doctor.wallet AS doctor_wallet,
-              doctor.name AS doctor_name, dp.specialty
-       FROM access_requests ar
-       JOIN users patient ON patient.id = ar.patient_id
-       JOIN users doctor ON doctor.id = ar.doctor_id
-       LEFT JOIN doctor_profiles dp ON dp.user_id = doctor.id
-       ${requestWhere} ORDER BY ar.requested_at DESC`,
-      requestParams
-    );
-
-    let logWhere = "";
-    let logParams = [];
-    if (actor.role === "patient") {
-      logWhere = "WHERE al.patient_id = ? AND al.granted = TRUE AND (al.expires_at IS NULL OR al.expires_at > NOW())";
-      logParams = [actor.id];
-    } else if (actor.role === "doctor") {
-      logWhere = "WHERE al.doctor_id = ?";
-      logParams = [actor.id];
-    }
-    const [logRows] = await pool.execute(
-      `SELECT al.*, patient.wallet AS patient_wallet, doctor.wallet AS doctor_wallet,
-              doctor.name AS doctor_name
-       FROM access_logs al
-       JOIN users patient ON patient.id = al.patient_id
-       JOIN users doctor ON doctor.id = al.doctor_id
-       ${logWhere} ORDER BY al.created_at DESC`,
-      logParams
-    );
-
-    const [doctors] = await pool.execute(
-      `SELECT u.id, u.name, u.wallet, dp.specialty, dp.license_number, dp.consultation_fee
-       FROM users u JOIN doctor_profiles dp ON dp.user_id = u.id
-       WHERE u.role = 'doctor' ORDER BY u.name`
-    );
-    const [profileRows] = actor.role === "patient"
-      ? await pool.execute("SELECT * FROM patient_profiles WHERE user_id = ?", [actor.id])
-      : actor.role === "doctor"
-      ? await pool.execute("SELECT * FROM doctor_profiles WHERE user_id = ?", [actor.id])
-      : [[]];
-    const [adminUsers] = actor.role === "administrator"
-      ? await pool.execute("SELECT id, name, email, role, wallet, created_at FROM users ORDER BY id")
-      : [[]];
-
-    res.json({
-      profile: profileRows[0] || null,
-      doctors: doctors.map((doctor) => ({
-        id: Number(doctor.id),
-        name: doctor.name,
-        address: doctor.wallet,
-        specialty: doctor.specialty,
-        license: doctor.license_number,
-        fee: String(doctor.consultation_fee).match(/[0-9]+(?:\.[0-9]+)?/)?.[0] || "0"
-      })),
-      records,
-      appointments: appointmentRows.map((item) => ({
-        id: Number(item.id),
-        patient: item.patient_wallet,
-        doctor: item.doctor_wallet,
-        startsAt: Math.floor(new Date(item.starts_at).getTime() / 1000),
-        fee: String(item.fee),
-        status: appointmentStatuses[item.status] ?? 0
-      })),
-      claims: claimRows.map((item) => ({
-        id: Number(item.id),
-        patient: item.patient_wallet,
-        encryptedEvidenceUri: item.encrypted_evidence_uri || "",
-        amountEth: String(item.claim_amount),
-        status: claimStatuses[item.status] ?? 0
-      })),
-      accessRequests: requestRows.map((item) => ({
-        id: Number(item.id),
-        doctor: item.doctor_wallet,
-        doctorName: item.doctor_name,
-        specialty: item.specialty,
-        patient: item.patient_wallet,
-        reason: item.reason || "",
-        status: requestStatuses[item.status] ?? 0,
-        requestedAt: Math.floor(new Date(item.requested_at).getTime() / 1000)
-      })),
-      accessLogs: logRows.map((item) => ({
-        id: Number(item.id),
-        patient: item.patient_wallet,
-        doctor: item.doctor_wallet,
-        doctorName: item.doctor_name,
-        purpose: item.purpose,
-        granted: Boolean(item.granted),
-        expiresAt: item.expires_at ? Math.floor(new Date(item.expires_at).getTime() / 1000) : null
-      })),
-      users: adminUsers
-    });
-  } catch (error) {
-    return respondWithError(res, error);
-  }
-});
+  });
 
 app.post("/api/records", requireAuth, async (req, res) => {
   try {
@@ -301,8 +280,10 @@ app.post("/api/access-requests", requireAuth, async (req, res) => {
   try {
     const actor = await findActor(req.auth.userId);
     if (!actor || actor.role !== "doctor") return res.status(403).json({ message: "Only doctors can request patient access." });
-    const [patients] = await pool.execute("SELECT id FROM users WHERE wallet = ? AND role = 'patient'", [req.body.patientWallet]);
-    if (!patients.length) return res.status(404).json({ message: "Patient wallet was not found." });
+    const patientId = Number(req.body.patientId);
+    if (!Number.isInteger(patientId) || patientId <= 0) return res.status(400).json({ message: "Select a patient." });
+    const [patients] = await pool.execute("SELECT id FROM users WHERE id = ? AND role = 'patient'", [patientId]);
+    if (!patients.length) return res.status(404).json({ message: "Patient was not found." });
     const [result] = await pool.execute(
       "INSERT INTO access_requests (patient_id, doctor_id, reason, status) VALUES (?, ?, ?, 'pending')",
       [patients[0].id, actor.id, req.body.reason || "Medical review"]
@@ -350,8 +331,10 @@ app.post("/api/access-grants", requireAuth, async (req, res) => {
   try {
     const actor = await findActor(req.auth.userId);
     if (!actor || actor.role !== "patient") return res.status(403).json({ message: "Only patients can manage access to their records." });
-    const [doctors] = await pool.execute("SELECT id FROM users WHERE wallet = ? AND role = 'doctor'", [req.body.doctorWallet]);
-    if (!doctors.length) return res.status(404).json({ message: "Doctor wallet was not found." });
+    const doctorId = Number(req.body.doctorId);
+    if (!Number.isInteger(doctorId) || doctorId <= 0) return res.status(400).json({ message: "Select a clinician." });
+    const [doctors] = await pool.execute("SELECT id FROM users WHERE id = ? AND role = 'doctor'", [doctorId]);
+    if (!doctors.length) return res.status(404).json({ message: "Clinician was not found." });
     if (req.body.granted) {
       await pool.execute(
         "INSERT INTO access_logs (patient_id, doctor_id, purpose, granted, expires_at) VALUES (?, ?, ?, TRUE, DATE_ADD(NOW(), INTERVAL 30 DAY))",
@@ -370,13 +353,15 @@ app.post("/api/appointments", requireAuth, async (req, res) => {
   try {
     const actor = await findActor(req.auth.userId);
     if (!actor || actor.role !== "patient") return res.status(403).json({ message: "Only patients can book appointments." });
+    const doctorId = Number(req.body.doctorId);
+    if (!Number.isInteger(doctorId) || doctorId <= 0) return res.status(400).json({ message: "Select a clinician." });
     const [doctors] = await pool.execute(
       `SELECT u.id, dp.consultation_fee
        FROM users u JOIN doctor_profiles dp ON dp.user_id = u.id
-       WHERE u.wallet = ? AND u.role = 'doctor'`,
-      [req.body.doctorWallet]
+       WHERE u.id = ? AND u.role = 'doctor'`,
+      [doctorId]
     );
-    if (!doctors.length) return res.status(404).json({ message: "Doctor not found." });
+    if (!doctors.length) return res.status(404).json({ message: "Clinician not found." });
     const startsAt = new Date(req.body.startsAt);
     const fee = Number(req.body.fee);
     const doctorFee = Number(String(doctors[0].consultation_fee).match(/[0-9]+(?:\.[0-9]+)?/)?.[0]);
@@ -430,38 +415,12 @@ app.patch("/api/appointments/:appointmentId", requireAuth, async (req, res) => {
   }
 });
 
-app.post("/api/claims", requireAuth, async (req, res) => {
-  try {
-    const actor = await findActor(req.auth.userId);
-    if (!actor || actor.role !== "patient") return res.status(403).json({ message: "Only patients can submit claims." });
-    const amount = Number(req.body.amount);
-    if (!req.body.encryptedEvidenceUri || !Number.isFinite(amount) || amount <= 0) {
-      return res.status(400).json({ message: "Evidence URI and positive claim amount are required." });
-    }
-    const [result] = await pool.execute(
-      "INSERT INTO insurance_claims (patient_id, insurer_name, claim_number, claim_amount, encrypted_evidence_uri, reason, status) VALUES (?, 'Demo insurer', ?, ?, ?, 'Patient-submitted encrypted evidence', 'pending')",
-      [actor.id, `DEMO-${Date.now()}`, amount, req.body.encryptedEvidenceUri]
-    );
-    res.status(201).json({ id: result.insertId });
-  } catch (error) {
-    return respondWithError(res, error);
+app.use((req, res) => {
+  const indexPath = path.join(__dirname, "../dist/index.html");
+  if (req.method === "GET" && fs.existsSync(indexPath)) {
+    return res.sendFile(indexPath);
   }
-});
-
-app.patch("/api/claims/:claimId", requireAuth, async (req, res) => {
-  try {
-    const actor = await findActor(req.auth.userId);
-    if (!actor || actor.role !== "administrator") return res.status(403).json({ message: "Only administrators can review demo claims." });
-    const status = req.body.approved ? "approved" : "rejected";
-    const [result] = await pool.execute(
-      "UPDATE insurance_claims SET status = ? WHERE id = ? AND status = 'pending'",
-      [status, Number(req.params.claimId)]
-    );
-    if (!result.affectedRows) return res.status(404).json({ message: "Pending claim not found." });
-    res.json({ status });
-  } catch (error) {
-    return respondWithError(res, error);
-  }
+  return res.status(404).json({ message: "Not found." });
 });
 
 app.listen(port, () => {

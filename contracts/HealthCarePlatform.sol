@@ -6,10 +6,9 @@ pragma solidity ^0.8.19;
  * @notice Modern Web 3.0 Decentralized Healthcare Platform
  * Includes:
  *  - Decentralized, access-controlled patient medical records & checksum validation
- *  - Role-based permissions (Patient, Doctor, Insurer, Admin)
+ *  - Role-based permissions (Patient, Doctor, Admin)
  *  - Doctor-to-Patient access request and approval workflow
  *  - Escrowed appointment booking & crypto settlement
- *  - Insurance claim filing, pool funding, and verification payouts
  *  - Doctor and Patient profile registries
  */
 contract HealthCarePlatform {
@@ -17,12 +16,9 @@ contract HealthCarePlatform {
     uint256 private _entered = 1;
     uint256 public nextRecordId = 1;
     uint256 public nextAppointmentId = 1;
-    uint256 public nextClaimId = 1;
     uint256 public nextRequestId = 1;
-    uint256 public claimPoolBalance;
 
     mapping(address => bool) public approvedDoctors;
-    mapping(address => bool) public approvedInsurers;
     mapping(address => mapping(address => bool)) public hasRecordAccess;
 
     enum RecordType { MedicalHistory, LabReport, Prescription, Consultation, PaymentLog }
@@ -50,12 +46,6 @@ contract HealthCarePlatform {
         uint8 status; // 0: Awaiting, 1: Confirmed, 2: Completed, 3: Cancelled
     }
 
-    struct Claim {
-        address patient;
-        string encryptedEvidenceUri;
-        uint256 amount;
-        uint8 status; // 0: In review, 1: Approved, 2: Declined
-    }
 
     struct AccessRequest {
         uint256 id;
@@ -104,7 +94,6 @@ contract HealthCarePlatform {
     mapping(uint256 => RecordMeta) public recordMeta;
     mapping(address => uint256[]) private _patientRecordIds;
     mapping(uint256 => Appointment) private _appointments;
-    mapping(uint256 => Claim) private _claims;
     mapping(uint256 => AccessRequest) private _accessRequests;
     mapping(address => uint256[]) private _patientRequestIds;
     mapping(address => uint256[]) private _doctorRequestIds;
@@ -116,7 +105,6 @@ contract HealthCarePlatform {
     address[] public doctorDirectory;
 
     event DoctorApprovalChanged(address indexed doctor, bool approved);
-    event InsurerApprovalChanged(address indexed insurer, bool approved);
     event RecordAccessChanged(address indexed patient, address indexed doctor, bool granted);
     event AccessPolicyUpdated(address indexed patient, address indexed doctor, bool granted, uint256 validForSeconds, string purpose);
     event AccessRequested(uint256 indexed requestId, address indexed patient, address indexed doctor, string reason);
@@ -124,9 +112,6 @@ contract HealthCarePlatform {
     event RecordAdded(uint256 indexed recordId, address indexed patient, address indexed author, string encryptedUri, bytes32 digest, uint256 createdAt);
     event AppointmentBooked(uint256 indexed appointmentId, address indexed patient, address indexed doctor, uint64 startsAt, uint256 fee);
     event AppointmentUpdated(uint256 indexed appointmentId, uint8 status);
-    event ClaimSubmitted(uint256 indexed claimId, address indexed patient, uint256 amount, string encryptedEvidenceUri);
-    event ClaimResolved(uint256 indexed claimId, uint8 status);
-    event ClaimPoolFunded(address indexed funder, uint256 amount);
     event DoctorRegistered(address indexed doctor, string name, string specialty);
     event PatientRegistered(address indexed patient, string name);
 
@@ -193,12 +178,6 @@ contract HealthCarePlatform {
         require(doctor != address(0), "Invalid doctor");
         approvedDoctors[doctor] = approved;
         emit DoctorApprovalChanged(doctor, approved);
-    }
-
-    function setInsurerApproval(address insurer, bool approved) external onlyOwner {
-        require(insurer != address(0), "Invalid insurer");
-        approvedInsurers[insurer] = approved;
-        emit InsurerApprovalChanged(insurer, approved);
     }
 
     // --- Access Control & Request Workflow ---
@@ -475,44 +454,6 @@ contract HealthCarePlatform {
         return appointment;
     }
 
-    // --- Insurance Claims & Verification ---
-
-    function submitClaim(string calldata encryptedEvidenceUri, uint256 amount) external returns (uint256 claimId) {
-        require(bytes(encryptedEvidenceUri).length > 0, "Missing encrypted evidence URI");
-        require(amount > 0, "Claim amount required");
-        claimId = nextClaimId++;
-        _claims[claimId] = Claim(msg.sender, encryptedEvidenceUri, amount, 0);
-        emit ClaimSubmitted(claimId, msg.sender, amount, encryptedEvidenceUri);
-    }
-
-    function fundClaimPool() external payable {
-        require(msg.value > 0, "Funding amount required");
-        claimPoolBalance += msg.value;
-        emit ClaimPoolFunded(msg.sender, msg.value);
-    }
-
-    function resolveClaim(uint256 claimId, bool approve) external nonReentrant {
-        require(approvedInsurers[msg.sender], "Only approved insurer");
-        Claim storage claim = _claims[claimId];
-        require(claim.patient != address(0), "Claim not found");
-        require(claim.status == 0, "Claim already resolved");
-        if (approve) require(claimPoolBalance >= claim.amount, "Insufficient claim pool");
-
-        claim.status = approve ? 1 : 2;
-        emit ClaimResolved(claimId, claim.status);
-        if (approve) {
-            claimPoolBalance -= claim.amount;
-            _sendValue(claim.patient, claim.amount);
-        }
-    }
-
-    function getClaim(uint256 claimId) external view returns (Claim memory) {
-        Claim memory claim = _claims[claimId];
-        require(claim.patient != address(0), "Claim not found");
-        require(msg.sender == claim.patient || approvedInsurers[msg.sender], "Not authorized");
-        return claim;
-    }
-
     // --- Internal Helpers ---
 
     function _hasActiveRecordAccess(address patient, address doctor) private view returns (bool) {
@@ -525,11 +466,5 @@ contract HealthCarePlatform {
     function _sendValue(address recipient, uint256 amount) private {
         (bool success, ) = payable(recipient).call{value: amount}("");
         require(success, "Payment failed");
-    }
-
-    // Allow contract to receive direct ETH for pool funding
-    receive() external payable {
-        claimPoolBalance += msg.value;
-        emit ClaimPoolFunded(msg.sender, msg.value);
     }
 }

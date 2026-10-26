@@ -4,7 +4,7 @@ const path = require("path");
 
 async function main() {
   console.log("Starting Web 3.0 Healthcare Platform deployment...");
-  const [deployer, patientAccount, doctorAccount, insurerAccount] = await ethers.getSigners();
+  const [deployer, patientAccount, doctorAccount] = await ethers.getSigners();
   console.log(`Deploying with account: ${deployer.address}`);
 
   // 1. Deploy unified platform
@@ -27,18 +27,11 @@ async function main() {
   const appointmentAddress = await appointment.getAddress();
   console.log(`[✔] Appointment (Modular) deployed to: ${appointmentAddress}`);
 
-  const InsuranceFactory = await ethers.getContractFactory("Insurance");
-  const insurance = await InsuranceFactory.deploy();
-  await insurance.waitForDeployment();
-  const insuranceAddress = await insurance.getAddress();
-  console.log(`[✔] Insurance (Modular) deployed to: ${insuranceAddress}`);
-
   // Seed demo setup if multiple signers exist (e.g., in local hardhat/ganache node)
-  if (patientAccount && doctorAccount && insurerAccount) {
+  if (patientAccount && doctorAccount) {
     try {
-      console.log("Seeding test roles and initial liquidity pools...");
+      console.log("Seeding test roles...");
       await platform.setDoctorApproval(doctorAccount.address, true);
-      await platform.setInsurerApproval(insurerAccount.address, true);
 
       // Register doctor profile
       await platform.connect(doctorAccount).registerDoctor(
@@ -55,13 +48,8 @@ async function main() {
         "O+"
       );
 
-      // Fund the claim pool with demo ETH
-      await platform.fundClaimPool({ value: ethers.parseEther("1.0") });
-
       console.log(`[✔] Pre-registered Patient: ${patientAccount.address} (Alice Smith)`);
       console.log(`[✔] Pre-approved Clinician: ${doctorAccount.address} (Dr. Sarah Chen)`);
-      console.log(`[✔] Pre-approved Insurer: ${insurerAccount.address} (MetHealth)`);
-      console.log(`[✔] Funded Claims Pool: 1.0 ETH`);
     } catch (e) {
       console.log("Skipping seed setup (non-local or insufficient funds):", e.message);
     }
@@ -71,8 +59,7 @@ async function main() {
   const envContent = [
     `VITE_CONTRACT_ADDRESS=${platformAddress}`,
     `VITE_HEALTH_RECORDS_ADDRESS=${healthRecordsAddress}`,
-    `VITE_APPOINTMENT_ADDRESS=${appointmentAddress}`,
-    `VITE_INSURANCE_ADDRESS=${insuranceAddress}`
+    `VITE_APPOINTMENT_ADDRESS=${appointmentAddress}`
   ].join("\n") + "\n";
 
   const envPath = path.resolve(__dirname, "..", ".env.local");

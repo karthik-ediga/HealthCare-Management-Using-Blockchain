@@ -53,10 +53,6 @@ button:focus-visible, input:focus-visible, a:focus-visible { outline: 3px solid 
 .breadcrumb strong { color: #334741; font-weight: 600; }
 .topbar-actions { display: flex; align-items: center; gap: 13px; }
 .role-pill { display: flex; align-items: center; gap: 7px; padding: 6px 10px; color: #58736a; border: 1px solid #e3ebe6; border-radius: 20px; background: white; font-size: 10px; }
-.wallet-button { display: flex; align-items: center; gap: 8px; min-height: 36px; padding: 0 13px; color: white; border: 0; border-radius: 5px; background: var(--green); font-size: 11px; font-weight: 600; cursor: pointer; transition: background .15s; }
-.wallet-button:hover { background: #155448; }
-.wallet-connected { color: #28564a; border: 1px solid #cfe3da; background: #edf6f2; }
-.wallet-connected:hover { background: #e3f1eb; }
 .page-content { width: min(1270px, 100%); margin: 0 auto; padding: 33px 40px 22px; }
 .page-heading { display: flex; align-items: flex-end; justify-content: space-between; margin-bottom: 23px; }
 .eyebrow, .section-kicker { color: #718f83; font-size: 9px; font-weight: 700; letter-spacing: 1.3px; }
@@ -105,9 +101,9 @@ button:focus-visible, input:focus-visible, a:focus-visible { outline: 3px solid 
 .activity-list { padding: 0 17px; }
 .appointment-row { display: flex; align-items: center; gap: 13px; min-height: 72px; padding: 12px 17px; border-bottom: 1px solid #edf1ee; }
 .appointment-row:last-child { border-bottom: 0; }
-.appointment-calendar, .claim-icon { display: grid; flex: 0 0 auto; place-items: center; width: 35px; height: 35px; color: #467a67; border-radius: 8px; background: #eaf4ef; }
+.appointment-calendar { display: grid; flex: 0 0 auto; place-items: center; width: 35px; height: 35px; color: #467a67; border-radius: 8px; background: #eaf4ef; }
 .appointment-main { display: grid; flex: 1; gap: 5px; min-width: 0; }
-.appointment-main strong, .claim-info strong { overflow: hidden; color: #364b43; font-size: 11px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.appointment-main strong { overflow: hidden; color: #364b43; font-size: 11px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .appointment-main > span { display: flex; align-items: center; gap: 5px; color: #899690; font-size: 9px; }
 .appointment-meta { display: grid; justify-items: end; gap: 5px; }
 .appointment-meta > strong { color: #51675e; font-size: 10px; font-weight: 600; }
@@ -182,20 +178,6 @@ button:focus-visible, input:focus-visible, a:focus-visible { outline: 3px solid 
 .row-actions { display: flex; align-items: center; gap: 5px; margin-left: 4px; }
 .small-accept, .small-reject { display: inline-flex; align-items: center; justify-content: center; gap: 4px; min-height: 28px; padding: 0 8px; color: #39745d; border: 1px solid #d8e9de; border-radius: 4px; background: #f2f8f4; font-size: 9px; font-weight: 600; cursor: pointer; }
 .small-reject { color: #8c6a61; border-color: #eee3df; background: #fcf8f6; }
-.claim-list { padding: 0 17px; }
-.claim-row { display: flex; align-items: center; gap: 12px; min-height: 69px; border-bottom: 1px solid #edf1ee; }
-.claim-row:last-child { border-bottom: 0; }
-.claim-info { display: grid; flex: 1; gap: 5px; min-width: 0; }
-.claim-info > span { display: flex; align-items: center; gap: 6px; color: #8b9791; font-size: 9px; }
-.claim-info i { width: 3px; height: 3px; border-radius: 50%; background: #aab6af; }
-.claim-amount { color: #52665d; font-size: 10px; font-weight: 600; white-space: nowrap; }
-.pool-strip { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 13px 17px; border: 1px solid #e4ece7; border-radius: 6px; background: white; }
-.pool-strip > div { display: grid; gap: 4px; }
-.pool-label { color: #809189; font-size: 8px; font-weight: 700; letter-spacing: .8px; }
-.pool-strip strong { color: #345448; font-family: "Manrope", sans-serif; font-size: 18px; }
-.pool-strip strong small { color: #85938c; font-family: "DM Sans", sans-serif; font-size: 9px; }
-.pool-strip form { display: flex; align-items: center; gap: 8px; }
-.pool-strip input { width: 145px; height: 34px; padding: 0 9px; border: 1px solid #dfe8e3; border-radius: 4px; font-size: 10px; }
 .admin-callout { border-color: #e9e3d3; background: #faf8f0; }
 .admin-callout > svg { color: #a28547; }
 .admin-callout strong { color: #74623c; }
@@ -240,9 +222,6 @@ button:focus-visible, input:focus-visible, a:focus-visible { outline: 3px solid 
   .topbar { min-height: 60px; padding: 0 15px; }
   .topbar-actions { gap: 7px; }
   .role-pill { padding: 6px 8px; font-size: 9px; }
-  .wallet-button { min-height: 34px; padding: 0 9px; font-size: 10px; }
-  .wallet-button svg:first-child { width: 14px; }
-  .wallet-connected svg:first-child { display: none; }
   .breadcrumb { gap: 7px; font-size: 10px; }
   .breadcrumb > span:first-child, .breadcrumb-slash { display: none; }
   .page-content { padding: 25px 15px 20px; }
@@ -283,20 +262,11 @@ button:focus-visible, input:focus-visible, a:focus-visible { outline: 3px solid 
   .inline-form { align-items: stretch; flex-direction: column; padding: 13px; }
   .inline-form .primary-button { align-self: flex-start; }
   .immutable-tag, .escrow-tag { font-size: 7px; }
-  .claim-list { padding: 0 11px; }
-  .claim-row { flex-wrap: wrap; gap: 8px; padding: 10px 0; }
-  .claim-info { min-width: calc(100% - 54px); }
-  .claim-amount { margin-left: 43px; }
-  .claim-row .row-actions { margin-left: auto; }
-  .pool-strip { align-items: flex-start; flex-direction: column; }
-  .pool-strip form { width: 100%; }
-  .pool-strip input { flex: 1; width: auto; min-width: 80px; }
   .page-footer { align-items: flex-start; flex-direction: column; font-size: 8px; }
   .transaction-bar { min-height: 36px; }
 }
 @media (max-width: 390px) {
   .topbar { gap: 8px; padding: 0 10px; }
-  .wallet-button { gap: 5px; font-size: 9px; }
   .role-pill { font-size: 8px; }
   .page-content { padding-right: 11px; padding-left: 11px; }
   .welcome-copy { max-width: 80%; }

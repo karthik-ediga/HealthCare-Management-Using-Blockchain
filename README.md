@@ -1,6 +1,6 @@
 # MedLedger Healthcare Portal
 
-This project is a role-based healthcare management application with a MySQL-backed login system and department-specific sections for patients, doctors, and administrators. It is designed to provide a realistic healthcare dashboard with records, appointments, access requests, and insurance claim data in a structured format.
+This project is a role-based healthcare management application with a MySQL-backed login system and department-specific sections for patients, doctors, and administrators. It is designed to provide a realistic healthcare dashboard with records, appointments, and access requests in a structured format.
 
 ---
 
@@ -15,54 +15,29 @@ The application includes the following major sections:
 - Medical Records
 - Appointments
 - Access Control
-- Insurance Claims
 - Administration
 
-The app is connected to a local MySQL database named `Mediccal_data` and uses a dedicated database connection file for credentials and connection configuration.
+The app connects to the Aiven MySQL service using credentials and a CA certificate configured in `.env`.
 
 ---
 
 ## Database Connection File
 
-Use the credentials in the `.env` file and the connection logic in `backend/dbConnection.js`.
+Set these values in the workspace-root `.env` file. Download the CA certificate from the Aiven console and set `DB_SSL_CA_PATH` to its path. The CA path can be absolute or relative to the project directory.
 
 ### Database credentials
 
 ```env
-DB_HOST=127.0.0.1
-DB_USER=root
-DB_PASSWORD=karthik4321@2005
-DB_NAME=Mediccal_data
-DB_PORT=3306
-JWT_SECRET=medledger-demo-secret
-NODE_ENV=development
+DB_HOST=your-service.aivencloud.com
+DB_USER=avnadmin
+DB_PASSWORD=your-rotated-aiven-password
+DB_NAME=defaultdb
+DB_PORT=your-aiven-port
+DB_SSL_CA_PATH=./aiven-ca.pem
+JWT_SECRET=replace-with-a-long-random-secret
 ```
 
-### Connection file
-
-```js
-const mysql = require("mysql2/promise");
-require("dotenv").config();
-
-const dbConfig = {
-  host: process.env.DB_HOST || "127.0.0.1",
-  user: process.env.DB_USER || "root",
-  password: process.env.DB_PASSWORD || "",
-  database: process.env.DB_NAME || "Mediccal_data",
-  port: Number(process.env.DB_PORT || 3306),
-  waitForConnections: true,
-  connectionLimit: 10,
-  queueLimit: 0,
-  timezone: "+00:00"
-};
-
-const pool = mysql.createPool(dbConfig);
-
-module.exports = {
-  pool,
-  dbConfig
-};
-```
+The backend requires all `DB_*` values and validates the Aiven TLS certificate. It does not fall back to local MySQL credentials.
 
 > File to update with the database credentials: `.env`
 > File containing the database connection logic: `backend/dbConnection.js`
@@ -79,7 +54,6 @@ The database schema contains the following tables:
 - `records`
 - `appointments`
 - `access_logs`
-- `insurance_claims`
 - `access_requests`
 
 Core schema summary:
@@ -125,8 +99,8 @@ These credentials work with the MySQL database and are used by the login API at 
 The current MySQL-backed login flow supports three roles: `patient`, `doctor`, and `administrator`.
 
 ### Patient
-- View their own medical records, appointments, and insurance claims.
-- Add their own medical records and submit insurance claims.
+- View their own medical records and appointments.
+- Add their own medical records with cryptographic integrity hashes.
 - Book appointments with listed doctors and cancel pending appointments.
 - Approve or decline doctor access requests, grant record access directly, and revoke access.
 
@@ -134,18 +108,16 @@ The current MySQL-backed login flow supports three roles: `patient`, `doctor`, a
 - View patient records only while the patient has granted active access.
 - Request access to a patient's records; the patient must approve the request.
 - View their assigned appointments, accept or decline pending appointments, and complete accepted appointments after the scheduled time.
-- The database-backed login flow does not let doctors add records or submit insurance claims.
+- The database-backed login flow does not let doctors add patient records without consent.
 
 ### Administrator
-- View the account directory and all records, appointments, and claims in the database-backed dashboard.
-- Review and approve or decline demo insurance claims.
-- The dashboard API also returns access requests and access logs to administrators, though the current administrator UI does not display the Access Control view.
-- Approving doctors and insurers is a blockchain contract-owner operation, not an administrator action in database demo mode.
+- View the account directory and all records and appointments in the dashboard.
+- Review network consent and clinician access audit logs.
+- Search and filter registered accounts across all roles.
 
 ### Access and Role Notes
 - Accepting an appointment does **not** grant a doctor access to medical records. Patient consent is a separate step; database-backed approvals grant access for 30 days.
-- There is no insurer role in the MySQL login schema or role selector. In the database demo, administrators review claims. On-chain, claim resolution requires an approved insurer.
-- These permissions describe the MySQL-backed login flow. Blockchain permissions apply only when the app is connected to a deployed contract and wallet.
+- These permissions describe the MySQL-backed login flow. Blockchain permissions apply when the app is connected to a deployed contract and wallet.
 
 ---
 
@@ -160,8 +132,7 @@ The current MySQL-backed login flow supports three roles: `patient`, `doctor`, a
   "doctors": 3,
   "medicalRecords": 8,
   "appointments": 6,
-  "pendingAccessRequests": 1,
-  "insuranceClaims": 3
+  "pendingAccessRequests": 1
 }
 ```
 
@@ -225,20 +196,6 @@ The current MySQL-backed login flow supports three roles: `patient`, `doctor`, a
 | 4 | 3 | 7 | Orthopedic imaging review | 1 | 2026-10-24T19:01:32.000Z |
 | 5 | 4 | 5 | Follow-up after maternity observation | 1 | 2026-11-03T19:01:32.000Z |
 
-### 8) Insurance Claims
-
-| ID | Patient ID | Insurer Name | Claim Number | Claim Amount | Status |
-|---:|---:|---|---|---|---|
-| 1 | 1 | BlueCross Health | BC-2026-1041 | 0.01500000 | approved |
-| 2 | 2 | CareSecure Plus | CS-2026-2189 | 0.02000000 | pending |
-| 3 | 4 | National Care Cover | NC-2026-3002 | 0.01100000 | paid |
-
----
-
-## Blockchain & Decentralization
-
-This project combines a healthcare dashboard with blockchain-backed logic to demonstrate how decentralization can support trust, traceability, and controlled access in a medical data environment.
-
 ### Core blockchain architecture
 
 - Smart contract framework: Solidity with Hardhat
@@ -250,18 +207,16 @@ This project combines a healthcare dashboard with blockchain-backed logic to dem
 ### Decentralized healthcare features
 
 - Patient record ownership and controlled access are modeled through on-chain permission logic.
-- Doctor approval and insurer approval are managed through smart contract mappings and admin-controlled functions.
-- Access requests and consent flows can be represented in a more transparent and auditable way than a centralized database alone.
+- Doctor approval is managed through smart contract mappings and admin-controlled functions.
+- Access requests and consent flows can be represented in a transparent and auditable way.
 - Appointment booking can include escrow-style payment logic and transaction-based status updates.
-- Claim submission and claim resolution can be tracked through contract events and on-chain state changes.
 - The platform supports a Web3 wallet-based interaction model using MetaMask for identity and transaction signing.
 
 ### Smart contracts in the project
 
-- `HealthCarePlatform.sol` — the primary healthcare contract for records, access policies, appointments, and insurance claim workflows.
+- `HealthCarePlatform.sol` — the primary healthcare contract for records, access policies, and appointments.
 - `HealthRecords.sol` — record-related logic and medical file handling.
 - `Appointment.sol` — booking, scheduling, accept/reject operations, and appointment status updates.
-- `Insurance.sol` — claim lifecycle management and payout-related logic.
 
 ### Web3 integration details
 
@@ -273,7 +228,6 @@ Typical environment variables used for connectivity include:
 VITE_CONTRACT_ADDRESS=0x...
 VITE_HEALTH_RECORDS_ADDRESS=0x...
 VITE_APPOINTMENT_ADDRESS=0x...
-VITE_INSURANCE_ADDRESS=0x...
 ```
 
 These values are generated after contract deployment using `scripts/deploy.js` and stored in `.env.local` for the frontend.
@@ -282,7 +236,7 @@ These values are generated after contract deployment using `scripts/deploy.js` a
 
 - Improves trust through transparent, auditable transactions.
 - Reduces dependence on a single central authority for healthcare workflow enforcement.
-- Creates a verifiable ledger for permission changes, appointments, and claims.
+- Creates a verifiable ledger for permission changes and appointments.
 - Helps demonstrate a realistic hybrid model where MySQL supports the app UI and blockchain adds trust and traceability.
 
 ### Important note
@@ -293,7 +247,7 @@ This is a healthcare demo platform and not a production-grade hospital ledger. T
 
 This project is designed as a hybrid healthcare application:
 
-- MySQL handles user authentication, healthcare records, appointments, access requests, and insurance data in a structured database format.
+- MySQL handles user authentication, healthcare records, appointments, and access requests in a structured database format.
 - Smart contracts handle the trust layer for decentralized identity, role permissions, transaction-based workflows, and contract-level auditability.
 - The frontend connects to both systems: it authenticates with the database and can also connect to MetaMask for blockchain-based actions.
 
@@ -301,7 +255,7 @@ In practical terms:
 
 1. A user logs in through the MySQL-backed role system.
 2. The dashboard loads patient, doctor, and admin data from the database.
-3. Wallet-connected actions such as record verification, appointment booking, and claim processing can be executed through the blockchain contract.
+3. Wallet-connected actions such as record verification and appointment booking can be executed through the blockchain contract.
 4. The blockchain acts as a transparent execution layer, while the database provides quick structured access for day-to-day app operations.
 
 This hybrid design makes the project easier to demonstrate, easier to test locally, and more realistic for a healthcare management prototype.
@@ -322,7 +276,7 @@ npm install
 npm run db:init
 ```
 
-This script creates the database and inserts the sample patient, doctor, administrator, medical records, appointments, access requests, and claim data.
+This script creates the database and inserts the sample patient, doctor, administrator, medical records, appointments, and access requests data.
 
 ### Start the backend server
 
@@ -334,7 +288,7 @@ Backend API endpoints include:
 
 - `GET /api/health`
 - `POST /api/login`
-- `GET /api/dashboard/:role/:userId`
+- `GET /api/dashboard`
 
 ### Start the frontend
 
@@ -345,7 +299,7 @@ npm run dev
 Open the app in the browser using:
 
 ```text
-http://localhost:4173
+http://localhost:5173
 ```
 
 ### Local blockchain setup (Hardhat + MetaMask)
@@ -375,16 +329,13 @@ npx hardhat run scripts/deploy.js --network localhost
 
 6. Refresh the app and connect the wallet from the UI. The app will then use the deployed contract address from `VITE_CONTRACT_ADDRESS` for blockchain interactions.
 
-This allows you to test record permissions, appointment flows, and claim logic directly against the blockchain while keeping the SQL-based app data for login and hospital operations.
+This allows you to test record permissions and appointment flows directly against the blockchain while keeping the SQL-based app data for login and hospital operations.
 
 ---
 
 ## Important Notes
 
 - The app is configured for MySQL and uses `backend/dbConnection.js` as the central DB connection file.
-- The database name is `Mediccal_data`.
-- The local host is `127.0.0.1`.
-- The MySQL port is `3306`.
 - Login credentials are stored in the database and are not hardcoded in the frontend.
 - The seeded data is intentionally structured to simulate realistic medical workflows and role-based access.
 
@@ -400,7 +351,6 @@ This healthcare platform demonstrates a working healthcare portal with:
 - patient medical history and record access
 - appointment scheduling
 - doctor access requests
-- insurance claim records
 - admin-level operational monitoring
 
 This is a functional demo application built around logical healthcare data and role separation, not a production hospital system.

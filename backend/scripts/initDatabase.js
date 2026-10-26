@@ -1,52 +1,26 @@
 const fs = require("fs");
 const path = require("path");
 const mysql = require("mysql2/promise");
-require("dotenv").config();
+const { dbConfig } = require("../dbConnection");
 
 const demoDatasetVersion = "1";
 
 async function initDatabase() {
-  const dbHost = process.env.DB_HOST || "127.0.0.1";
-  const dbUser = process.env.DB_USER || "root";
-  const dbPassword = process.env.DB_PASSWORD || "";
-  const dbName = process.env.DB_NAME || "Mediccal_data";
-  const dbPort = Number(process.env.DB_PORT || 3306);
+  const { database, ...serverConfig } = dbConfig;
 
   const connection = await mysql.createConnection({
-    host: dbHost,
-    user: dbUser,
-    password: dbPassword,
-    port: dbPort,
+    ...serverConfig,
     multipleStatements: true
   });
 
   try {
-    await connection.query(`CREATE DATABASE IF NOT EXISTS \`${dbName}\`;`);
-    await connection.query(`USE \`${dbName}\`;`);
+    await connection.query(`CREATE DATABASE IF NOT EXISTS \`${database}\`;`);
+    await connection.query(`USE \`${database}\`;`);
 
     const schemaSql = fs.readFileSync(path.join(__dirname, "../sql/schema.sql"), "utf8");
     const seedSql = fs.readFileSync(path.join(__dirname, "../sql/seed.sql"), "utf8");
 
     await connection.query(schemaSql);
-    const [claimEvidenceColumn] = await connection.query(
-      "SHOW COLUMNS FROM insurance_claims LIKE 'encrypted_evidence_uri'"
-    );
-    if (!claimEvidenceColumn.length) {
-      await connection.query(
-        "ALTER TABLE insurance_claims ADD COLUMN encrypted_evidence_uri VARCHAR(255) NULL AFTER claim_amount"
-      );
-    }
-    await connection.query(
-      "ALTER TABLE insurance_claims MODIFY claim_amount DECIMAL(18,8) NOT NULL DEFAULT 0.00000000"
-    );
-    const [claimNumberIndex] = await connection.query(
-      "SHOW INDEX FROM insurance_claims WHERE Column_name = 'claim_number' AND Non_unique = 0"
-    );
-    if (!claimNumberIndex.length) {
-      await connection.query(
-        "ALTER TABLE insurance_claims ADD UNIQUE INDEX uq_insurance_claim_number (claim_number)"
-      );
-    }
     await connection.query(`
       CREATE TABLE IF NOT EXISTS demo_seed_state (
         seed_version VARCHAR(32) PRIMARY KEY,
@@ -83,10 +57,7 @@ async function initDatabase() {
             'Request access to glucose monitoring history',
             'Assess recovery plan after ligament strain',
             'Consent for postpartum wellness checkup'
-          )) AS access_requests,
-          (SELECT COUNT(*) FROM insurance_claims WHERE claim_number IN (
-            'BC-2026-1041', 'CS-2026-2189', 'NC-2026-3002'
-          )) AS claims
+          )) AS access_requests
       `);
       const existingDatasetIsComplete =
         Number(counts[0].users) >= 8 &&
@@ -95,8 +66,7 @@ async function initDatabase() {
         Number(counts[0].records) >= 8 &&
         Number(counts[0].appointments) >= 6 &&
         Number(counts[0].access_logs) >= 5 &&
-        Number(counts[0].access_requests) >= 4 &&
-        Number(counts[0].claims) >= 3;
+        Number(counts[0].access_requests) >= 4;
 
       if (!existingDatasetIsComplete) await connection.query(seedSql);
       await connection.execute(
@@ -105,7 +75,7 @@ async function initDatabase() {
       );
     }
 
-    console.log(`Database ${dbName} initialized successfully.`);
+    console.log(`Database ${database} initialized successfully.`);
   } finally {
     await connection.end();
   }

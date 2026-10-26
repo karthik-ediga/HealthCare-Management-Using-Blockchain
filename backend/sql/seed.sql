@@ -70,17 +70,6 @@ ON DUPLICATE KEY UPDATE
   granted = VALUES(granted),
   expires_at = VALUES(expires_at);
 
-INSERT INTO insurance_claims (patient_id, insurer_name, claim_number, claim_amount, encrypted_evidence_uri, reason, status) VALUES
-  (1, 'BlueCross Health', 'BC-2026-1041', 0.015, 'ipfs://bafybeiclaimproof8984920evidence', 'Cardiology consultation and lab coverage', 'approved'),
-  (2, 'CareSecure Plus', 'CS-2026-2189', 0.020, 'ipfs://bafybeiclearclaimlabinvoice2026', 'Diabetes monitoring and insulin prescription', 'pending'),
-  (4, 'National Care Cover', 'NC-2026-3002', 0.011, 'ipfs://bafybeimissedfollowupcareinvoice', 'Prenatal follow-up and diagnostic screening', 'paid')
-ON DUPLICATE KEY UPDATE
-  insurer_name = VALUES(insurer_name),
-  claim_amount = VALUES(claim_amount),
-  encrypted_evidence_uri = VALUES(encrypted_evidence_uri),
-  reason = VALUES(reason),
-  status = VALUES(status);
-
 INSERT INTO access_requests (patient_id, doctor_id, reason, status) VALUES
   (1, 5, 'Review cholesterol trends for medication update', 'approved'),
   (2, 6, 'Request access to glucose monitoring history', 'pending'),

@@ -5,12 +5,13 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks(id) {
-          if (id.includes("/node_modules/ethers/")) return "ethers";
-          if (id.includes("/node_modules/lucide-react/")) return "icons";
+          const norm = id.replace(/\\/g, "/");
+          if (norm.includes("/node_modules/ethers/")) return "ethers";
+          if (norm.includes("/node_modules/lucide-react/")) return "icons";
           if (
-            id.includes("/node_modules/react/") ||
-            id.includes("/node_modules/react-dom/") ||
-            id.includes("/node_modules/scheduler/")
+            norm.includes("/node_modules/react/") ||
+            norm.includes("/node_modules/react-dom/") ||
+            norm.includes("/node_modules/scheduler/")
           ) {
             return "react-vendor";
           }
